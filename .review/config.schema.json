@@ -1,0 +1,133 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "risk_map": {
+      "type": "object",
+      "properties": {
+        "critical": { "type": "array", "items": { "type": "string" } },
+        "high": { "type": "array", "items": { "type": "string" } }
+      },
+      "additionalProperties": false
+    },
+    "mandatory_checks": { "type": "array", "items": { "type": "string" } },
+    "project_rules": { "type": "array", "items": { "type": "string" } },
+    "intent_sources": {
+      "type": "object",
+      "properties": {
+        "pr": { "type": "boolean" },
+        "commits": { "type": "boolean" },
+        "pr_comments": { "type": "boolean" },
+        "clickup": { "type": "boolean" },
+        "jira": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+    "gate": {
+      "type": "object",
+      "properties": {
+        "block_on": { "type": "array", "items": { "type": "string" } },
+        "warn_on": { "type": "array", "items": { "type": "string" } }
+      },
+      "additionalProperties": false
+    },
+    "verify": {
+      "type": "object",
+      "description": "Bounded adversarial re-verification. Only low-confidence/uncertain aspects are re-checked; never the whole review.",
+      "properties": {
+        "max_passes_per_aspect": { "type": "integer", "minimum": 1, "maximum": 3, "description": "Total looks at one aspect incl. the original review (1 review + up to 2 verifier passes = 3)." },
+        "max_subagents_per_aspect": { "type": "integer", "minimum": 1, "maximum": 3 },
+        "reverify_below": { "type": "integer", "minimum": 0, "maximum": 100, "description": "Findings with confidence below this are sent to the verifier." },
+        "report_confidence": { "type": "integer", "minimum": 0, "maximum": 100, "description": "Findings at/above this survive to the report." },
+        "escalate_uncertain": { "type": "boolean", "description": "Still-uncertain after the cap → surface to the human, do not drop." }
+      },
+      "additionalProperties": false
+    },
+    "escalation": {
+      "type": "object",
+      "description": "Spawn-on-doubt: when a reviewer flags uncertain:true, fan a tiny panel (capped) at just that aspect.",
+      "properties": {
+        "max_subagents_per_aspect": { "type": "integer", "minimum": 1, "maximum": 3 }
+      },
+      "additionalProperties": false
+    },
+    "large_diff": {
+      "type": "object",
+      "properties": {
+        "shard_threshold_loc": { "type": "integer", "minimum": 1 },
+        "max_shards": { "type": "integer", "minimum": 1, "maximum": 12 }
+      },
+      "additionalProperties": false
+    },
+    "scan": {
+      "type": "object",
+      "description": "Run real tools when available (advisory; findings feed D15).",
+      "properties": {
+        "deps": { "type": "boolean" },
+        "tests": { "type": "boolean" },
+        "lint": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+    "report": {
+      "type": "object",
+      "properties": {
+        "markdown": { "type": "string" },
+        "html": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "learning": {
+      "type": "object",
+      "description": "Per-project memory: recurring findings, accepted false-positives, and unresolved questions persist across runs.",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "store": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "notify": {
+      "type": "object",
+      "properties": {
+        "ask_on_unresolved": { "type": "boolean", "description": "Surface unresolved/assumption questions to the user instead of silently assuming." }
+      },
+      "additionalProperties": false
+    },
+    "trackers": {
+      "type": "object",
+      "description": "Issue-tracker connectors. Tokens come from env vars, never the config file.",
+      "properties": {
+        "clickup": {
+          "type": "object",
+          "properties": {
+            "token_env": { "type": "string" },
+            "key_pattern": { "type": "string" }
+          },
+          "additionalProperties": false
+        },
+        "jira": {
+          "type": "object",
+          "properties": {
+            "base_url": { "type": "string" },
+            "email_env": { "type": "string" },
+            "token_env": { "type": "string" },
+            "key_pattern": { "type": "string" }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "exhaustive": {
+      "type": "object",
+      "description": "Tier C ultrareview-parity passes (completeness critic, taint, generative verify, loop-until-dry). Auto-on at the critical tier or with --exhaustive; they cost extra tokens.",
+      "properties": {
+        "on_critical": { "type": "boolean", "description": "Run the exhaustive passes automatically when the tier is critical (default true)." },
+        "max_discovery_rounds": { "type": "integer", "minimum": 1, "maximum": 5, "description": "Loop-until-dry cap: most reviewer re-sweeps before stopping." }
+      },
+      "additionalProperties": false
+    },
+    "knowledge_packs": { "type": "object" }
+  }
+}

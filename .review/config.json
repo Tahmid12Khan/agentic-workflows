@@ -1,0 +1,31 @@
+{
+  "risk_map": {
+    "critical": ["lib/**", ".review/**", "commands/**"],
+    "high": ["agents/**"]
+  },
+  "mandatory_checks": [
+    "no secrets or tokens committed",
+    "pure lib functions have unit tests"
+  ],
+  "project_rules": ["README.md"],
+  "intent_sources": { "pr": true, "commits": true, "pr_comments": true, "clickup": false, "jira": false },
+  "gate": { "block_on": ["critical"], "warn_on": ["high"] },
+  "verify": {
+    "max_passes_per_aspect": 3,
+    "max_subagents_per_aspect": 3,
+    "reverify_below": 80,
+    "report_confidence": 80,
+    "escalate_uncertain": true
+  },
+  "escalation": { "max_subagents_per_aspect": 3 },
+  "exhaustive": { "on_critical": true, "max_discovery_rounds": 2 },
+  "large_diff": { "shard_threshold_loc": 600, "max_shards": 4 },
+  "scan": { "deps": true, "tests": false, "lint": false },
+  "report": { "markdown": "REVIEW.md", "html": "REVIEW.html" },
+  "learning": { "enabled": true, "store": ".review/learnings.json" },
+  "notify": { "ask_on_unresolved": true },
+  "trackers": {
+    "clickup": { "token_env": "CLICKUP_TOKEN", "key_pattern": "CU-[a-z0-9]+|#[a-z0-9]+" },
+    "jira": { "base_url": "", "email_env": "JIRA_EMAIL", "token_env": "JIRA_TOKEN", "key_pattern": "[A-Z][A-Z0-9]+-[0-9]+" }
+  }
+}

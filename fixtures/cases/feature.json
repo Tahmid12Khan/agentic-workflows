@@ -1,0 +1,12 @@
+{
+  "name": "normal feature",
+  "files": ["src/profile/profileService.ts", "src/profile/profileService.test.ts"],
+  "netLoc": 90,
+  "diff": "diff --git a/src/profile/profileService.ts ...",
+  "depsChanged": false,
+  "testsPresent": true,
+  "concurrencyTouched": false,
+  "publicContract": false,
+  "expectedTier": "standard",
+  "expectedDimensions": ["D1","D2","D4","D5","D12","D16"]
+}

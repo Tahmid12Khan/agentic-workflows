@@ -1,0 +1,12 @@
+{
+  "name": "payment capture change",
+  "files": ["src/payment/CaptureService.java"],
+  "netLoc": 60,
+  "diff": "diff --git a/src/payment/CaptureService.java ...",
+  "depsChanged": false,
+  "testsPresent": true,
+  "concurrencyTouched": true,
+  "publicContract": false,
+  "expectedTier": "critical",
+  "expectedDimensions": ["D1","D2","D3","D4","D5","D6","D7","D8","D12","D14"]
+}

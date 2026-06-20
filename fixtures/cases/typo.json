@@ -1,0 +1,12 @@
+{
+  "name": "doc typo",
+  "files": ["README.md"],
+  "netLoc": 1,
+  "diff": "--- a/README.md\n+++ b/README.md\n@@\n-teh\n+the\n",
+  "depsChanged": false,
+  "testsPresent": false,
+  "concurrencyTouched": false,
+  "publicContract": false,
+  "expectedTier": "trivial",
+  "expectedDimensions": ["D2", "D13"]
+}

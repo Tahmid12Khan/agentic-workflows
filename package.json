@@ -1,0 +1,12 @@
+{
+  "name": "agentic-code-review",
+  "version": "0.2.0",
+  "description": "Advisory, criticality-aware code review for Claude Code. Scales depth to risk, adversarially verifies the unsure findings, never edits code.",
+  "type": "module",
+  "private": true,
+  "license": "MIT",
+  "engines": { "node": ">=18" },
+  "scripts": {
+    "test": "node --test"
+  }
+}

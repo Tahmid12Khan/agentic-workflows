@@ -1,0 +1,17 @@
+{
+  "name": "agentic-code-review",
+  "owner": { "name": "Tahmid" },
+  "metadata": {
+    "description": "Advisory, criticality-aware code review for Claude Code.",
+    "version": "0.1.0"
+  },
+  "plugins": [
+    {
+      "name": "agentic-code-review",
+      "source": "./",
+      "description": "Advisory, criticality-aware code review. Scales depth to change risk; reports findings, never edits code.",
+      "version": "0.1.0",
+      "keywords": ["code-review", "review", "quality", "security"]
+    }
+  ]
+}
