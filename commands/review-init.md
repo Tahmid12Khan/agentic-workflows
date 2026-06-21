@@ -2,10 +2,10 @@
 description: Set up code review in this project — checks your environment and scaffolds .review/config.json.
 ---
 
-Initialize the agentic-code-review plugin for the current repository.
+Initialize the adversarial-code-review plugin for the current repository.
 
 ## 1. Environment check
-Run `node "${CLAUDE_PLUGIN_ROOT:-$HOME/.claude/agentic-code-review}/lib/preflight.mjs"` and show the report. If a required item is missing (✗), tell the user how to fix it before continuing.
+Run `node "${CLAUDE_PLUGIN_ROOT:-$HOME/.claude/adversarial-code-review}/lib/preflight.mjs"` and show the report. If a required item is missing (✗), tell the user how to fix it before continuing.
 
 ## 2. Scaffold the config
 - If `.review/config.json` already exists, print it and ask whether to overwrite. Do nothing else unless they confirm.
@@ -41,7 +41,7 @@ Run `node "${CLAUDE_PLUGIN_ROOT:-$HOME/.claude/agentic-code-review}/lib/prefligh
 - **`exhaustive`** turns on the deeper ultrareview-parity passes (completeness critic, taint, generative verify, loop-until-dry). They cost more tokens, so by default they run only at the `critical` tier (`on_critical: true`) or when `/review --exhaustive` is passed. Set `on_critical: false` to make them opt-in only.
 - **Trackers (optional):** if the user wants ClickUp/Jira intent, set `intent_sources.clickup`/`jira` to `true` and add a `trackers` block. Tokens come from **env vars only** (`CLICKUP_TOKEN`, or `JIRA_EMAIL`+`JIRA_TOKEN` with `trackers.jira.base_url`) — never write a token into the config file. Tell the user which env vars to export.
 
-Validate the result against `${CLAUDE_PLUGIN_ROOT:-$HOME/.claude/agentic-code-review}/.review/config.schema.json`.
+Validate the result against `${CLAUDE_PLUGIN_ROOT:-$HOME/.claude/adversarial-code-review}/.review/config.schema.json`.
 
 ## 3. Confirm
 Print the path written and tell the user they can now run `/review` (and `/review --gate` in hooks/CI, `/review --comment` to post inline PR comments). Add `.review/learnings.json` and `REVIEW.html`/`REVIEW.md` to `.gitignore` if they prefer those uncommitted. NEVER edit anything except `.review/config.json` (and `.gitignore` if asked).

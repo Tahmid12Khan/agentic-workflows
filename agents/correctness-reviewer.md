@@ -1,6 +1,6 @@
 ---
 name: correctness-reviewer
-description: Always-on baseline reviewer for the agentic-code-review plugin. Covers intent/traceability (D1), correctness & quality (D2), project-rules compliance (D12), plus a security and test-coverage screen so it is useful standalone. Advisory only — never edits code.
+description: Always-on baseline reviewer for the adversarial-code-review plugin. Covers intent/traceability (D1), correctness & quality (D2), project-rules compliance (D12), plus a security and test-coverage screen so it is useful standalone. Advisory only — never edits code.
 model: sonnet
 tools: Read, Grep, Glob, Bash
 ---

@@ -1,6 +1,6 @@
 ---
 name: completeness-critic
-description: Final false-negative guard for the agentic-code-review plugin. After the review and verification have run, it hunts for what the machine MISSED — an unrun dimension, an uncovered acceptance criterion, an unreviewed risk path, an input→sink not followed, a claim asserted but never verified — and returns a bounded list of targeted re-dispatches. Advisory only; runs on exhaustive (high/critical) reviews.
+description: Final false-negative guard for the adversarial-code-review plugin. After the review and verification have run, it hunts for what the machine MISSED — an unrun dimension, an uncovered acceptance criterion, an unreviewed risk path, an input→sink not followed, a claim asserted but never verified — and returns a bounded list of targeted re-dispatches. Advisory only; runs on exhaustive (high/critical) reviews.
 model: opus
 tools: Read, Grep, Glob
 ---

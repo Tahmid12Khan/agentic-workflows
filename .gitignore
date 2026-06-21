@@ -1,4 +1,7 @@
 node_modules/
-REVIEW.md
+# generated review reports at repo root — anchored so this does NOT
+# case-insensitively swallow commands/review.md on macOS/Windows.
+/REVIEW.md
+/REVIEW.html
 .review/cache/
 *.log

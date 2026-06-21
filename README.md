@@ -1,8 +1,10 @@
-# Agentic Code Review
+# Adversarial Code Review
 
 A Claude Code **plugin** for advisory, **criticality-aware** code review. It understands a change's intent, scales review depth to risk (a typo gets a tiny review; an auth/payment/migration change gets adversarial depth), **adversarially verifies the findings it isn't sure about**, learns per project, and delivers results as Markdown, **HTML**, inline PR comments, or a pass/block gate.
 
 **It never modifies your code — strictly advisory.**
+
+> **New here?** [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) is a diagram-driven walkthrough of how a change flows through the plugin — built for readers who've never seen the code.
 
 ## What it does
 
@@ -30,24 +32,33 @@ A Claude Code **plugin** for advisory, **criticality-aware** code review. It und
 
 ## Install
 
-Self-contained Claude Code plugin **and** a one-plugin marketplace.
+Self-contained Claude Code plugin **and** a one-plugin marketplace. The repo *is* the
+marketplace — add it by its GitHub slug, then install the plugin from it.
 
 ```text
-/plugin marketplace add your-org/agentic-code-review     # or a local path
-/plugin install agentic-code-review@agentic-code-review
+/plugin marketplace add Tahmid12Khan/agentic-workflows     # GitHub slug (or a local path)
+/plugin install adversarial-code-review@adversarial-code-review     # plugin@marketplace
+```
+
+Claude Code clones the repo, reads `.claude-plugin/marketplace.json` (which registers the
+`adversarial-code-review` marketplace), and installs the bundled `adversarial-code-review` plugin.
+After installing, `/review-init` and `/review` are available. To update later:
+
+```text
+/plugin marketplace update adversarial-code-review
 ```
 
 ### Or: use it globally via symlinks (live, edit-in-place)
 
 ```bash
 REPO=/absolute/path/to/agentic-workflows
-ln -sf "$REPO" ~/.claude/agentic-code-review
+ln -sf "$REPO" ~/.claude/adversarial-code-review
 ln -sf "$REPO/commands/review.md"      ~/.claude/commands/acr-review.md
 ln -sf "$REPO/commands/review-init.md" ~/.claude/commands/acr-review-init.md
 for a in "$REPO"/agents/*.md; do ln -sf "$a" ~/.claude/agents/"$(basename "$a")"; done
 ```
 
-Commands resolve scripts via `${CLAUDE_PLUGIN_ROOT:-$HOME/.claude/agentic-code-review}`, so they work in both modes. Globally the commands are **`/acr-review`** and **`/acr-review-init`**.
+Commands resolve scripts via `${CLAUDE_PLUGIN_ROOT:-$HOME/.claude/adversarial-code-review}`, so they work in both modes. Globally the commands are **`/acr-review`** and **`/acr-review-init`**.
 
 ## Quickstart
 
@@ -111,7 +122,7 @@ Runs on **high/critical tiers** (lower tiers ship at the ≥80 gate). The user-t
 | D3 security | vuln-reviewer | opus |
 | D4 error handling | error-handling-reviewer | sonnet |
 | D5 tests | test-adequacy-reviewer | sonnet |
-| D6/D8 data & resources | data-store-reviewer | opus |
+| D6/D8 data & resources | data-store-reviewer | sonnet · opus on migration |
 | D7 concurrency | concurrency-reviewer | opus |
 | D9 perf | perf-scalability-reviewer | opus |
 | D10 API compat | api-compat-reviewer | sonnet |
@@ -132,7 +143,7 @@ Created by `/review-init`; schema at `.review/config.schema.json`. Beyond `risk_
 
 ```
 commands/   /review, /review-init
-agents/     21 bundled agents
+agents/     23 bundled agents
 lib/
   preflight.mjs   env check
   plan.mjs        diff → review plan (tier, dims, shards, budgets)

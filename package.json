@@ -1,5 +1,5 @@
 {
-  "name": "agentic-code-review",
+  "name": "adversarial-code-review",
   "version": "0.2.0",
   "description": "Advisory, criticality-aware code review for Claude Code. Scales depth to risk, adversarially verifies the unsure findings, never edits code.",
   "type": "module",
