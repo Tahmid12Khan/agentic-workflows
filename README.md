@@ -41,24 +41,23 @@ marketplace — add it by its GitHub slug, then install the plugin from it.
 ```
 
 Claude Code clones the repo, reads `.claude-plugin/marketplace.json` (which registers the
-`adversarial-code-review` marketplace), and installs the bundled `adversarial-code-review` plugin.
-After installing, `/review-init` and `/review` are available. To update later:
+`adversarial-code-review` marketplace), and installs the bundled `adversarial-code-review`
+plugin. The `/review-init` and `/review` commands are then available.
+
+### Updating
+
+Pull the latest version by refreshing the marketplace — this re-fetches the repo:
 
 ```text
 /plugin marketplace update adversarial-code-review
 ```
 
-### Or: use it globally via symlinks (live, edit-in-place)
+The installed plugin then picks up the new version. If it doesn't, reinstall it (or manage
+everything from the interactive `/plugin` menu):
 
-```bash
-REPO=/absolute/path/to/agentic-workflows
-ln -sf "$REPO" ~/.claude/adversarial-code-review
-ln -sf "$REPO/commands/review.md"      ~/.claude/commands/acr-review.md
-ln -sf "$REPO/commands/review-init.md" ~/.claude/commands/acr-review-init.md
-for a in "$REPO"/agents/*.md; do ln -sf "$a" ~/.claude/agents/"$(basename "$a")"; done
+```text
+/plugin install adversarial-code-review@adversarial-code-review
 ```
-
-Commands resolve scripts via `${CLAUDE_PLUGIN_ROOT:-$HOME/.claude/adversarial-code-review}`, so they work in both modes. Globally the commands are **`/acr-review`** and **`/acr-review-init`**.
 
 ## Quickstart
 
