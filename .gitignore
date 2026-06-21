@@ -1,7 +1,11 @@
 node_modules/
-# generated review reports at repo root — anchored so this does NOT
-# case-insensitively swallow commands/review.md on macOS/Windows.
-/REVIEW.md
-/REVIEW.html
-.review/cache/
 *.log
+
+# Generated review output + per-project state. The config (config.json,
+# config.schema.json) stays tracked; everything below is produced at run time.
+# Patterns are scoped to the dir so they do NOT case-insensitively swallow
+# commands/review.md on macOS/Windows.
+.adverserial-code-review/review-*/
+.adverserial-code-review/cache/
+.adverserial-code-review/learnings.json
+.adverserial-code-review/last-review.json

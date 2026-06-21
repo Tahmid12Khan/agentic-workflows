@@ -68,7 +68,7 @@ flowchart TD
   E["5 · REVIEW<br/><i>correctness-reviewer + specialists</i><br/>one isolated pass per dimension × shard"]
   F["6 · VERIFY<br/><i>finding-verifier / taint-verifier</i><br/>adversarially refute only the unsure findings"]
   G["7 · SYNTHESIZE<br/><i>review-synthesizer</i><br/>dedupe, traceability matrix,<br/>needs-human list, one verdict"]
-  H["8 · DELIVER<br/><i>report.mjs · comments.mjs · pr-comment-author</i><br/>REVIEW.md + REVIEW.html, gate exit code,<br/>inline comments, memory write"]
+  H["8 · DELIVER<br/><i>report.mjs · comments.mjs · pr-comment-author</i><br/>review.md + review.html (per-run folder),<br/>gate exit code, inline comments, memory write"]
 
   A --> B --> C
   C -->|"tier == trivial"| H
@@ -89,7 +89,7 @@ What each stage contributes:
 5. **Review** — fans out reviewers. The always-on `correctness-reviewer` plus one specialist per planned dimension, each on the model `triage` chose for that dimension, each on its own shard for large diffs. Every reviewer gets a **clean packet** (intent + criteria + diff) and never the chat history.
 6. **Verify** — the bounded adversarial pass. See [Bounded adversarial verification](#bounded-adversarial-verification).
 7. **Synthesize** — `review-synthesizer` dedupes, builds the requirement→code traceability matrix, separates confident findings from open questions, and emits one verdict.
-8. **Deliver** — `report.mjs` writes `REVIEW.md` + `REVIEW.html`, prints a terminal summary, and (with `--gate`) returns the gate as an exit code; `--comment` posts inline PR comments via `pr-comment-author` + `comments.mjs`; the run is recorded to memory; unresolved questions are surfaced to you.
+8. **Deliver** — `report.mjs` writes `review.md` + `review.html` into a per-run folder `.adverserial-code-review/review-<YYYY-MM-DD>/review-<n>[-pr-<num>]/` (an outer folder per day, an inner folder per run; each report names the PR and its start/finish times), prints a terminal summary, and (with `--gate`) returns the gate as an exit code; `--comment` posts inline PR comments via `pr-comment-author` + `comments.mjs`; the run is recorded to memory; unresolved questions are surfaced to you.
 
 ---
 
@@ -118,7 +118,7 @@ Risk paths are matched by `signals.mjs` against filename patterns: `auth`, `paym
 
 ### Step 2 — the `risk_map` floor (can only *raise*)
 
-Your `.review/config.json` defines glob → tier floors. A glob hit raises the tier to its
+Your `.adverserial-code-review/config.json` defines glob → tier floors. A glob hit raises the tier to its
 floor; it can **never** lower a change below the risk its path implies.
 
 ```mermaid
@@ -345,9 +345,9 @@ orchestrator uses `plan.models[dimension]`, so a dimension can run hotter than i
 
 ---
 
-## Configuration — `.review/config.json`
+## Configuration — `.adverserial-code-review/config.json`
 
-Created by `/review-init`; validated against `.review/config.schema.json`. Every key is
+Created by `/review-init`; validated against `.adverserial-code-review/config.schema.json`. Every key is
 optional and falls back to a sensible default.
 
 | Key | What it controls |

@@ -9,6 +9,7 @@ Bundled scripts live under `${CLAUDE_PLUGIN_ROOT:-$HOME/.claude/adversarial-code
 **Hard limits (do not exceed):** for any single aspect — one dimension on one shard, the verification of one finding, or the scrutiny of one intent — dispatch **at most 3 subagents total**, and look at that aspect **at most 3 times total** (the original review + at most 2 verifier passes). Across the whole review you may use many subagents; never more than 3 on one aspect.
 
 ## 1. Preflight
+Capture the **start time** now and keep it for the report: `STARTED=$(date -u +%Y-%m-%dT%H:%M:%SZ)`.
 Run `node "$LIB/preflight.mjs"`. If it exits non-zero, show the report and STOP.
 
 ## 2. Plan
@@ -24,7 +25,7 @@ If `tier == "trivial"`: do one quick correctness/comment pass inline (no subagen
 - Capture the diff: `git diff <base>..HEAD` (or per shard later).
 - Run `node "$LIB/gather.mjs" --base <base>` → context bundle: `{ pr, existingComments, tickets, commits, rules, summary }` (PR body, **existing PR/inline comments**, linked ClickUp/Jira issues when enabled + token present, project rules). Tools missing → it degrades and notes the skip.
 - If `learning.enabled`: `node "$LIB/memory.mjs" load <learning.store>` → prior learnings (recurring, accepted false-positives, open questions).
-- `--incremental`: if `.review/last-review.json` exists, load it; later mark findings new vs carried-over so you only re-spend effort on new code.
+- `--incremental`: if `.adverserial-code-review/last-review.json` exists, load it; later mark findings new vs carried-over so you only re-spend effort on new code.
 
 ## 4. Dependency / supply-chain scan
 If `scan.deps`: run `node "$LIB/scan.mjs"` → `{ findings, notes }`. Seed the D15 findings; add each `note` to the report's skipped/coverage list.
@@ -53,7 +54,7 @@ Build an isolated reviewer packet: `{ summary + acceptanceCriteria + mismatches 
 
 Do NOT eyeball this — let the deterministic policy pick the verify set:
 ```bash
-echo '{"findings":[...all collected findings...],"config":<the .review config>,"riskPaths":<signals.riskPaths>}' \
+echo '{"findings":[...all collected findings...],"config":<the .adverserial-code-review config>,"riskPaths":<signals.riskPaths>}' \
   | node "$LIB/verify.mjs" select
 ```
 It returns `{ select, maxVerifierPasses, maxSubagentsPerAspect }` — only the unsure findings (confidence < `reverify_below`, `uncertain:true`, an unscored finding, or high-severity on a risk path). High-confidence findings off risk paths are not in the set and are kept as-is. **Each selected finding carries flat `lens` + `focus` fields** (security/concurrency/data/resources/perf/error/api/types/observability, else correctness) and, for security findings, a flat `agent` field — pass them to the verifier so the second look attacks from a dimension-appropriate angle, not as another identical refuter.
@@ -86,16 +87,18 @@ This is the one pass aimed at what the review MISSED, not at refuting what it fo
   - `plan` — the whole step-2 plan JSON (the report reads `tier`, `dimensions`, `dimensionLabels`, `models`, `runVerify`, `discovery`, `sharded`, `shards` from it to derive which agents were in scope and why others were not).
   - `agentRuns` — a map of `agentName → number of times you actually dispatched it` across the whole review, counting per-shard reviews, extra-intent/mandatory-check passes, verifier passes, and any spawn-on-doubt or completeness re-dispatches. This is what makes the run counts real rather than planned. If you did not track a given agent, omit it (the report falls back to the planned dispatch count).
   - `commentMode` — `true` when `--comment` was passed (so `pr-comment-author` is shown as run).
+  - `startedAt` — the `STARTED` timestamp from step 1; `prNumber` — the PR number when there is one (from the gather bundle / `gh`), omit otherwise. The report prints both, with human-readable start + finish times.
   - Use the criteria objects' real text as the requirement name (the report leads each traceability row with the requirement, with the `AC#` id as a tag), and include `covered`/`evidence` per criterion.
+  - **Do not pass `--out`/`--html`.** `report.mjs` writes into a per-run folder `.adverserial-code-review/review-{YYYY-MM-DD}/review-{counter}[-pr-{prNumber}]/` containing `review.md` + `review.html` — an outer folder per day, an inner folder per run (counter resets each day). (Pass `--base-dir` only to relocate the parent.)
 ```bash
-echo '{"findings":[...],"criteria":[{"id":"AC1","text":"<requirement>","covered":true,"evidence":"<file:line>"}],"tier":"<tier>","gate":<gate>,"needsHuman":[...],"skipped":[...],"strengths":[...],"summary":"...","context":{"pr":...,"tickets":[...],"existingComments":[...]},"verify":{"summary":"<resolve summary>"},"plan":<the step-2 plan JSON>,"agentRuns":{"correctness-reviewer":1,"vuln-reviewer":2,"finding-verifier":3},"commentMode":false,"learningStore":"<learning.store>","range":"<range>"}' \
-  | node "$LIB/report.mjs" [--gate] --out <reportTargets.markdown> --html <reportTargets.html>
+echo '{"findings":[...],"criteria":[{"id":"AC1","text":"<requirement>","covered":true,"evidence":"<file:line>"}],"tier":"<tier>","gate":<gate>,"needsHuman":[...],"skipped":[...],"strengths":[...],"summary":"...","context":{"pr":...,"tickets":[...],"existingComments":[...]},"plan":<the step-2 plan JSON>,"agentRuns":{"correctness-reviewer":1,"vuln-reviewer":2,"finding-verifier":3},"commentMode":false,"startedAt":"<STARTED>","prNumber":<n or omit>,"learningStore":"<learning.store>","range":"<range>"}' \
+  | node "$LIB/report.mjs" [--gate]
 ```
-  - Always writes **REVIEW.md + REVIEW.html** (with the requirement-traceability matrix, the findings, and an **Agents & coverage** rundown of which agents ran — with run counts and model — and which did not and why) and prints a terminal summary + verdict (`APPROVE`/`WARN`/`BLOCK`). The script also folds in memory (suppresses accepted false-positives, tags recurring) and records this run.
+  - Writes **`review.md` + `review.html`** into the per-run folder (each with the requirement-traceability matrix that names every requirement, the findings, the PR number + start/finish timestamps, and an **Agents & coverage** rundown of which agents ran — with run counts and model — and which did not and why), prints the folder path + a terminal summary + verdict (`APPROVE`/`WARN`/`BLOCK`), folds in memory, and records this run. Keep the two files concise and non-duplicative — explain in plain terms, briefly.
   - `--gate`: the script's exit code is the gate (non-zero on BLOCK) — for hooks/CI.
   - `--comment`: also `echo '{"findings":[enriched],"head":"<head>","prNumber":<n>,"existingComments":[...]}' | node "$LIB/comments.mjs"` to post inline PR comments (deduped against existing). Requires `gh`.
-- **Incremental state:** write `.review/last-review.json` with this run's finding keys + range for next-run dedup.
-- **Notify:** if `needsHuman` is non-empty and `notify.ask_on_unresolved`, present those open questions to the user in chat as a short numbered list and tell them their answers will be saved to project memory (`.review/learnings.json`) so the same question is not re-asked. Do not block the report on the answer.
+- **Incremental state:** write `.adverserial-code-review/last-review.json` with this run's finding keys + range for next-run dedup.
+- **Notify:** if `needsHuman` is non-empty and `notify.ask_on_unresolved`, present those open questions to the user in chat as a short numbered list and tell them their answers will be saved to project memory (`.adverserial-code-review/learnings.json`) so the same question is not re-asked. Do not block the report on the answer.
 
 ## Output discipline
 Strengths-first, cite `file:line` for every finding, no performative agreement, advisory only — never edit source.

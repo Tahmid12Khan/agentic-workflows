@@ -89,3 +89,25 @@ test('reports render an Agents & coverage section in markdown and HTML', () => {
   assert.match(html, /Agents &amp; coverage/);
   assert.match(html, /finding-verifier/);
 });
+
+test('reports show PR number and start/finish timestamps from meta', () => {
+  const meta = { prNumber: 42, started: 'Sun, 21 Jun 2026 14:00:00 GMT', finished: 'Sun, 21 Jun 2026 14:02:01 GMT', duration: '2m 1s' };
+  const md = renderReport({ findings, criteria, tier: 'standard', meta });
+  assert.match(md, /PR #42/);
+  assert.match(md, /started Sun, 21 Jun 2026 14:00:00 GMT/);
+  assert.match(md, /took 2m 1s/);
+  const html = renderHtml({ findings, criteria, tier: 'standard', meta });
+  assert.match(html, /PR #42/);
+  assert.match(html, /14:02:01 GMT/);
+});
+
+test('needs-input items render even as bare strings or sparse objects (no empty cards)', () => {
+  const nh = ['Should deleting a user cascade to their orders?', { verify: { passes: 3, real: 1, refuted: 1 } }];
+  const md = renderReport({ findings, criteria, tier: 'high', needsHuman: nh });
+  assert.match(md, /Should deleting a user cascade/);   // string item is shown
+  assert.match(md, /\(unspecified/);                     // sparse object gets a visible placeholder
+  const html = renderHtml({ findings, criteria, tier: 'high', needsHuman: nh });
+  assert.match(html, /Should deleting a user cascade/);
+  assert.match(html, /Needs your input/);
+  assert.doesNotMatch(html, /f-loc">\?/);                // no bare "?" location
+});

@@ -62,8 +62,8 @@ everything from the interactive `/plugin` menu):
 ## Quickstart
 
 ```text
-/review-init     # check env + scaffold .review/config.json
-/review          # review the current branch vs its merge-base; writes REVIEW.md + REVIEW.html
+/review-init     # check env + scaffold .adverserial-code-review/config.json
+/review          # review the current branch vs its merge-base; writes review.md + review.html into .adverserial-code-review/review-<date>/review-<n>/
 ```
 
 `/review` flags:
@@ -93,7 +93,7 @@ preflight  gather    plan    harvest/    reviewers       adversarial        roll
 5. **Review** — `correctness-reviewer` always; the planned specialist agents per dimension; one pass per shard for large diffs; extra-intent groups get focused scrutiny.
 6. **Verify** — `finding-verifier` adversarially tries to refute the unsure findings. **≤ 3 looks / ≤ 3 subagents per aspect.** Survivors kept, refuted dropped, still-split → "needs human".
 7. **Synthesize** — `review-synthesizer` dedupes, builds the requirement→code matrix, separates findings from open questions, emits a verdict.
-8. **Deliver** (`report.mjs`) — `REVIEW.md` + `REVIEW.html` + terminal summary; `--gate` → exit code; `--comment` → inline comments via `pr-comment-author` + `comments.mjs`; records this run to memory; surfaces open questions to you.
+8. **Deliver** (`report.mjs`) — writes `review.md` + `review.html` into a per-run folder `.adverserial-code-review/review-<YYYY-MM-DD>/review-<n>[-pr-<num>]/` (each report carries the PR number and start/finish timestamps) + terminal summary; `--gate` → exit code; `--comment` → inline comments via `pr-comment-author` + `comments.mjs`; records this run to memory; surfaces open questions to you.
 
 ### Tiers (the token-saving brain)
 
@@ -105,7 +105,7 @@ preflight  gather    plan    harvest/    reviewers       adversarial        roll
 | High | shared lib, API contract, perf hot path | full fan-out + bounded verify |
 | Critical | auth, payments, migrations, concurrency, crypto | all dimensions, deepest models, bounded verify |
 
-`risk_map` and `mandatory_checks` in `.review/config.json` are **floors** triage cannot skip.
+`risk_map` and `mandatory_checks` in `.adverserial-code-review/config.json` are **floors** triage cannot skip.
 
 ### Bounded adversarial verification
 
@@ -134,9 +134,9 @@ Runs on **high/critical tiers** (lower tiers ship at the ≥80 gate). The user-t
 
 Each is isolated (clean packet: intent + criteria + diff, never the chat history), changed-lines-only, and confidence-gated (≥ 80).
 
-## Configuration — `.review/config.json`
+## Configuration — `.adverserial-code-review/config.json`
 
-Created by `/review-init`; schema at `.review/config.schema.json`. Beyond `risk_map`, `mandatory_checks`, `project_rules`, `intent_sources`, and `gate`, v0.2 adds: `verify`, `escalation`, `large_diff`, `scan`, `report`, `learning`, `notify`, and `trackers` (ClickUp/Jira — tokens from env vars only).
+Created by `/review-init`; schema at `.adverserial-code-review/config.schema.json`. Beyond `risk_map`, `mandatory_checks`, `project_rules`, `intent_sources`, and `gate`, v0.2 adds: `verify`, `escalation`, `large_diff`, `scan`, `report`, `learning`, `notify`, and `trackers` (ClickUp/Jira — tokens from env vars only).
 
 ## Layout
 
@@ -154,10 +154,10 @@ lib/
   memory.mjs      per-project learnings store
   gather.mjs      PR / comments / trackers / rules → context bundle
   scan.mjs        npm/pip dependency CVE scan
-  render.mjs      findings → REVIEW.md + REVIEW.html + verdict (pure)
+  render.mjs      findings → review.md + review.html + verdict (pure)
   report.mjs      render + gate + memory record (CLI)
   comments.mjs    inline PR comments via gh (CLI)
-.review/    config.schema.json, config.json (dogfood)
+.adverserial-code-review/    config.schema.json, config.json (dogfood)
 tests/      node:test unit tests
 fixtures/   sample diffs + expected tiers
 ```

@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, existsSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, existsSync, readFileSync, rmSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -75,6 +75,32 @@ test('report.mjs writes REVIEW.md + REVIEW.html and blocks on a critical finding
     assert.ok(existsSync(join(tmp, 'REVIEW.md')));
     assert.ok(existsSync(join(tmp, 'REVIEW.html')));
     assert.match(readFileSync(join(tmp, 'REVIEW.html'), 'utf8'), /Needs your input/);
+  } finally { rmSync(tmp, { recursive: true, force: true }); }
+});
+
+test('report.mjs writes into review-{date}/review-{counter}-pr-{n}/review.{md,html}', () => {
+  const tmp = mkdtempSync(join(tmpdir(), 'acr-dir-'));
+  try {
+    const input = JSON.stringify({
+      tier: 'high',
+      findings: [{ dimension: 'D2', severity: 'minor', file: 'a.ts', line: 1, title: 'nit', confidence: 90 }],
+      criteria: [{ id: 'AC1', text: 'works', covered: true }],
+      prNumber: 7,
+      startedAt: '2026-06-21T10:00:00Z',
+      gate: { block_on: ['critical'], warn_on: ['high'] },
+    });
+    const out = run('report.mjs', ['--base-dir', tmp], { input, cwd: tmp });
+    const dateDirs = readdirSync(tmp).filter((d) => /^review-\d{4}-\d{2}-\d{2}$/.test(d));
+    assert.deepEqual(dateDirs, ['review-2026-06-21']);     // outer folder is the review date
+    const dateDir = join(tmp, dateDirs[0]);
+    assert.deepEqual(readdirSync(dateDir), ['review-1-pr-7']); // inner folder is counter + pr
+    assert.ok(existsSync(join(dateDir, 'review-1-pr-7', 'review.md')));
+    assert.ok(existsSync(join(dateDir, 'review-1-pr-7', 'review.html')));
+    assert.match(readFileSync(join(dateDir, 'review-1-pr-7', 'review.md'), 'utf8'), /PR #7/);
+    assert.match(out, /PR #7/);
+    // a second run the same day increments the per-day counter
+    run('report.mjs', ['--base-dir', tmp], { input, cwd: tmp });
+    assert.ok(readdirSync(dateDir).includes('review-2-pr-7'));
   } finally { rmSync(tmp, { recursive: true, force: true }); }
 });
 

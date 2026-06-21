@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 test('project config is valid JSON and has a gate', () => {
-  const cfg = JSON.parse(readFileSync('.review/config.json', 'utf8'));
+  const cfg = JSON.parse(readFileSync('.adverserial-code-review/config.json', 'utf8'));
   assert.ok(cfg.gate.block_on.includes('critical'));
   assert.ok(Array.isArray(cfg.risk_map.critical));
 });
@@ -11,8 +11,8 @@ test('project config is valid JSON and has a gate', () => {
 // Guards the A4-class regression: a config key absent from the schema (e.g. a
 // removed knob left in the scaffold) would fail /review-init's own validation.
 test('project config has no keys the schema forbids (additionalProperties:false blocks)', () => {
-  const cfg = JSON.parse(readFileSync('.review/config.json', 'utf8'));
-  const schema = JSON.parse(readFileSync('.review/config.schema.json', 'utf8'));
+  const cfg = JSON.parse(readFileSync('.adverserial-code-review/config.json', 'utf8'));
+  const schema = JSON.parse(readFileSync('.adverserial-code-review/config.schema.json', 'utf8'));
   const errors = [];
   (function check(obj, sch, path) {
     if (!sch || typeof obj !== 'object' || obj === null || Array.isArray(obj)) return;

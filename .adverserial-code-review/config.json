@@ -1,6 +1,6 @@
 {
   "risk_map": {
-    "critical": ["lib/**", ".review/**", "commands/**"],
+    "critical": ["lib/**", ".adverserial-code-review/**", "commands/**"],
     "high": ["agents/**"]
   },
   "mandatory_checks": [
@@ -22,7 +22,7 @@
   "large_diff": { "shard_threshold_loc": 600, "max_shards": 4 },
   "scan": { "deps": true, "tests": false, "lint": false },
   "report": { "markdown": "REVIEW.md", "html": "REVIEW.html" },
-  "learning": { "enabled": true, "store": ".review/learnings.json" },
+  "learning": { "enabled": true, "store": ".adverserial-code-review/learnings.json" },
   "notify": { "ask_on_unresolved": true },
   "trackers": {
     "clickup": { "token_env": "CLICKUP_TOKEN", "key_pattern": "CU-[a-z0-9]+|#[a-z0-9]+" },
