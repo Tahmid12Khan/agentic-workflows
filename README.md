@@ -78,6 +78,47 @@ everything from the interactive `/plugin` menu):
 | `--incremental` | Only re-spend effort on code new since the last review. |
 | `--exhaustive` | Force the Tier C ultrareview-parity passes (completeness critic, taint, generative verify, loop-until-dry) at any tier. Costs more tokens; auto-on at `critical`. |
 
+## The review output
+
+Every run writes a self-contained report. Here is the HTML report for a `high`-tier PR review:
+
+![Example HTML review report](docs/assets/review-example.png)
+
+It opens with the tier + verdict, the PR number and start/finish timestamps, then the
+requirement-traceability matrix (each row named, not just `AC1`), the findings grouped by
+severity, the **Needs your input** questions, and an **Agents & coverage** rundown of
+which agents ran (model + run count) and which did not and why.
+
+### Where reviews are kept
+
+Each run gets its own folder — an outer folder per day, an inner folder per run:
+
+```
+.adverserial-code-review/
+  review-2026-06-21/                 # outer: the review date (YYYY-MM-DD)
+    review-1-pr-128/                  # inner: run counter + PR number
+      review.md                      # Markdown report
+      review.html                    # same report, self-contained styled HTML
+    review-2/                        # no open PR → the -pr-<n> suffix is omitted
+      review.md
+      review.html
+```
+
+The counter resets each day. The base folder (`.adverserial-code-review/`) also holds the
+tracked `config.json`; the generated `review-*` folders, `learnings.json`, and
+`last-review.json` are git-ignored.
+
+### Format & how to access
+
+- **`review.html`** — a single self-contained file (inline CSS, no assets). Open it in any
+  browser: `open .adverserial-code-review/review-*/review-*/review.html` (macOS) or just
+  double-click it. Best for reading.
+- **`review.md`** — the same content as Markdown. Renders inline on GitHub/GitLab or in any
+  editor; good for diffs, PR descriptions, and grepping.
+
+Both files carry identical findings; pick whichever fits your workflow. The terminal also
+prints the folder path, a one-line summary, and the verdict (`APPROVE` / `WARN` / `BLOCK`).
+
 ## How it works
 
 ```
