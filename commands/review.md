@@ -1,5 +1,5 @@
 ---
-description: Advisory criticality-aware code review of the current branch diff, with bounded adversarial verification. Flags: --base <ref> --comment --gate --tier <t> --dimensions <list> --incremental --exhaustive.
+description: Advisory criticality-aware code review of the current branch diff, with bounded adversarial verification. Flags: --base <ref> --comment --gate --tier <t> --dimensions <list> --incremental --exhaustive --no-worktree.
 ---
 
 Run a systematic, **advisory** code review of the current change. NEVER modify source code — report only.
@@ -12,9 +12,21 @@ Bundled scripts live under `${CLAUDE_PLUGIN_ROOT:-$HOME/.claude/adversarial-code
 Capture the **start time** now and keep it for the report: `STARTED=$(date -u +%Y-%m-%dT%H:%M:%SZ)`.
 Run `node "$LIB/preflight.mjs"`. If it exits non-zero, show the report and STOP.
 
+## 1b. Worktree — review the latest pushed code
+Read the `worktree` block from `.adverserial-code-review/config.json` (defaults if absent: `enabled:true`, `remote:"origin"`, `base_dir:".adverserial-code-review/worktrees"`, `keep:false`). The point is to review the change against the **latest pushed** base/head, not whatever is checked out locally.
+
+- **Resolve base + head branches:**
+  - `--base <ref>` (if passed) wins for the base.
+  - else if this branch has a PR (`gh pr view --json number,baseRefName,headRefName`), use its `baseRefName` / `headRefName` (and keep its `number` for `--pr`).
+  - else base = the default branch (`main`/`master`), head = the current branch (`git rev-parse --abbrev-ref HEAD`).
+- **Skip the worktree** (review the local working tree as-is) when `enabled:false`, `--no-worktree` is passed, or you are reviewing **uncommitted** local changes — a worktree only sees committed refs. In that case set `WT` empty and `worktrees=[]`, then continue.
+- **Otherwise create it:** `node "$LIB/worktree.mjs" setup --base <base> --head <head> --remote <remote> [--pr <n>] --dir <base_dir>` → parse `{ ok, name, path, baseRef, headRef, range, notes }`. Set `WT=<path>`. Record `worktrees=[{ name, path, baseRef, headRef, remote, base, head }]` for the report, and surface any `notes` (e.g. a fetch that failed → it fell back to local refs).
+- **Run the rest of the review with `WT` as the working directory** (steps 2–8: `cd "$WT"` for `git`/`node`/`gather`/`scan` calls and all file reads), and pass `--base <baseRef>` to `plan.mjs` so the range is `baseRef..HEAD` (HEAD is the worktree's checkout of `headRef`). Config + project rules travel into the worktree because `config.json` is committed.
+- **The report itself is written from the MAIN repo** (step 9) so it survives teardown — do NOT `cd "$WT"` for `report.mjs`.
+
 ## 2. Plan
-Run `node "$LIB/plan.mjs" --base <ref-or-omit>` (pass through `--tier`/`--dimensions`/`--exhaustive` if supplied). Parse the JSON plan:
-`{ base, head, range, tier, dimensions, dimensionLabels, agents, dimensionAgents, models, runVerify, verify, escalation, exhaustive, discovery, sharded, shards, scan, reportTargets, learning, notify, trackers, mandatoryChecks, gate, intentSources, projectRules, signals, diffSummary }`.
+Run `node "$LIB/plan.mjs" --base <ref-or-omit>` (use the worktree's `baseRef` from step 1b when present; pass through `--tier`/`--dimensions`/`--exhaustive` if supplied). Parse the JSON plan:
+`{ base, head, range, tier, dimensions, dimensionLabels, agents, dimensionAgents, models, runVerify, verify, escalation, exhaustive, discovery, sharded, shards, scan, learning, notify, trackers, mandatoryChecks, gate, intentSources, projectRules, signals, diffSummary }`.
 Print: `Tier: <tier>${exhaustive ? " (exhaustive)" : ""} | agents: <agents> | <diffSummary>`.
 
 **`plan.discovery`** drives the Tier C ultrareview-parity passes — `{ exhaustive, maxRounds, completenessCritic, taint, generativeVerify, loopUntilDry }`. They are all on together when `plan.exhaustive` (auto at `critical`, or `--exhaustive`) and all off otherwise. Each step below that costs extra tokens is explicitly gated on the matching `plan.discovery.*` flag; when it is false, run the plain (cheap) path.
@@ -23,7 +35,12 @@ If `tier == "trivial"`: do one quick correctness/comment pass inline (no subagen
 
 ## 3. Gather context + memory
 - Capture the diff: `git diff <base>..HEAD` (or per shard later).
-- Run `node "$LIB/gather.mjs" --base <base>` → context bundle: `{ pr, existingComments, tickets, commits, rules, summary }` (PR body, **existing PR/inline comments**, linked ClickUp/Jira issues when enabled + token present, project rules). Tools missing → it degrades and notes the skip.
+- Run `node "$LIB/gather.mjs" --base <base>` → context bundle: `{ pr, existingComments, tickets, commits, rules, ticketKeys, trackerStatus, summary, notes }` (PR body, **existing PR/inline comments**, project rules, and the **issue keys** found in the PR/commit text per tracker). Tools missing → it degrades and notes the skip.
+- **Fetch linked tickets via MCP — never via API tokens.** For each tracker in `trackerStatus` that is `enabled`:
+  - **ClickUp** → if a ClickUp MCP server is connected (e.g. `clickup_get_task` / `clickup_search`), fetch each key in `ticketKeys.clickup` and append `{ tracker:'clickup', key, title, description, status }` to `bundle.tickets`. **Jira** → use the Atlassian MCP the same way for `ticketKeys.jira`.
+  - If the tracker is **enabled but its MCP server is not available**, do NOT fail: **ask the user once to connect/enable that MCP server**, then skip fetching for this run.
+  - If the tracker is **disabled** in config, skip silently.
+  - Record the outcome per tracker as `trackerUsage` (carry it to step 9): `{ clickup: { status: "used"|"skipped-no-mcp"|"no-keys"|"off", detail }, jira: {...} }`. The report must state whether each tracker was used.
 - If `learning.enabled`: `node "$LIB/memory.mjs" load <learning.store>` → prior learnings (recurring, accepted false-positives, open questions).
 - `--incremental`: if `.adverserial-code-review/last-review.json` exists, load it; later mark findings new vs carried-over so you only re-spend effort on new code.
 
@@ -83,20 +100,23 @@ This is the one pass aimed at what the review MISSED, not at refuting what it fo
 
 ## 9. Deliver
 - If `--comment`: dispatch **pr-comment-author** on the kept findings → comment-ready objects (`fixCode`, `example`, tone).
-- Render + gate. Build the payload from the pieces already computed: `findings` = the synthesizer's deduped kept list (== step 7's `report`), `needsHuman` = synthesizer needs-human + business-logic open questions, `context` = the gather bundle (`{pr, tickets, existingComments}` from step 3, so the report cites them), `verify.summary` = step 7's `resolve` summary. Also pass the **`plan`** object verbatim from step 2 plus an **`agentRuns`** map and **`commentMode`** so the report can show an accurate "Agents & coverage" section (who ran, who didn't, and why):
+- Render + gate. Build the payload from the pieces already computed: `findings` = the synthesizer's deduped kept list (== step 7's `report`), `needsHuman` = synthesizer needs-human + business-logic open questions, `context` = the gather bundle (`{pr, tickets, existingComments, trackerUsage}` from step 3, so the report cites the tickets and states whether each tracker was used), `verify.summary` = step 7's `resolve` summary. Also pass the **`plan`** object verbatim from step 2 plus an **`agentRuns`** map and **`commentMode`** so the report can show an accurate "Agents & coverage" section (who ran, who didn't, and why):
   - `plan` — the whole step-2 plan JSON (the report reads `tier`, `dimensions`, `dimensionLabels`, `models`, `runVerify`, `discovery`, `sharded`, `shards` from it to derive which agents were in scope and why others were not).
   - `agentRuns` — a map of `agentName → number of times you actually dispatched it` across the whole review, counting per-shard reviews, extra-intent/mandatory-check passes, verifier passes, and any spawn-on-doubt or completeness re-dispatches. This is what makes the run counts real rather than planned. If you did not track a given agent, omit it (the report falls back to the planned dispatch count).
   - `commentMode` — `true` when `--comment` was passed (so `pr-comment-author` is shown as run).
   - `startedAt` — the `STARTED` timestamp from step 1; `prNumber` — the PR number when there is one (from the gather bundle / `gh`), omit otherwise. The report prints both, with human-readable start + finish times.
+  - `worktrees` — the `worktrees` array from step 1b (each `{ name, path, baseRef, headRef }`); the report names the worktree(s) the review ran in. Pass `[]` (or omit) when no worktree was used.
   - Use the criteria objects' real text as the requirement name (the report leads each traceability row with the requirement, with the `AC#` id as a tag), and include `covered`/`evidence` per criterion.
   - **Do not pass `--out`/`--html`.** `report.mjs` writes into a per-run folder `.adverserial-code-review/review-{YYYY-MM-DD}/review-{counter}[-pr-{prNumber}]/` containing `review.md` + `review.html` — an outer folder per day, an inner folder per run (counter resets each day). (Pass `--base-dir` only to relocate the parent.)
+  - **Run `report.mjs` from the MAIN repo** (not from `WT`), so the report folder persists after the worktree is torn down.
 ```bash
-echo '{"findings":[...],"criteria":[{"id":"AC1","text":"<requirement>","covered":true,"evidence":"<file:line>"}],"tier":"<tier>","gate":<gate>,"needsHuman":[...],"skipped":[...],"strengths":[...],"summary":"...","context":{"pr":...,"tickets":[...],"existingComments":[...]},"plan":<the step-2 plan JSON>,"agentRuns":{"correctness-reviewer":1,"vuln-reviewer":2,"finding-verifier":3},"commentMode":false,"startedAt":"<STARTED>","prNumber":<n or omit>,"learningStore":"<learning.store>","range":"<range>"}' \
+echo '{"findings":[...],"criteria":[{"id":"AC1","text":"<requirement>","covered":true,"evidence":"<file:line>"}],"tier":"<tier>","gate":<gate>,"needsHuman":[...],"skipped":[...],"strengths":[...],"summary":"...","context":{"pr":...,"tickets":[...],"existingComments":[...],"trackerUsage":{"clickup":{"status":"used","detail":"2 ticket(s) via MCP"},"jira":{"status":"skipped-no-mcp"}}},"plan":<the step-2 plan JSON>,"agentRuns":{"correctness-reviewer":1,"vuln-reviewer":2,"finding-verifier":3},"commentMode":false,"startedAt":"<STARTED>","prNumber":<n or omit>,"worktrees":[{"name":"review-pr-7-feature-abc1234","path":".adverserial-code-review/worktrees/review-pr-7-feature-abc1234","baseRef":"origin/main","headRef":"origin/feature"}],"learningStore":"<learning.store>","range":"<range>"}' \
   | node "$LIB/report.mjs" [--gate]
 ```
   - Writes **`review.md` + `review.html`** into the per-run folder (each with the requirement-traceability matrix that names every requirement, the findings, the PR number + start/finish timestamps, and an **Agents & coverage** rundown of which agents ran — with run counts and model — and which did not and why), prints the folder path + a terminal summary + verdict (`APPROVE`/`WARN`/`BLOCK`), folds in memory, and records this run. Keep the two files concise and non-duplicative — explain in plain terms, briefly.
   - `--gate`: the script's exit code is the gate (non-zero on BLOCK) — for hooks/CI.
   - `--comment`: also `echo '{"findings":[enriched],"head":"<head>","prNumber":<n>,"existingComments":[...]}' | node "$LIB/comments.mjs"` to post inline PR comments (deduped against existing). Requires `gh`.
+- **Worktree teardown:** if step 1b created a worktree and `worktree.keep` is not `true`, remove it: `node "$LIB/worktree.mjs" remove --path "$WT"` (its name is already recorded in the report). If `keep:true`, leave it in place and tell the user the path.
 - **Incremental state:** write `.adverserial-code-review/last-review.json` with this run's finding keys + range for next-run dedup.
 - **Notify:** if `needsHuman` is non-empty and `notify.ask_on_unresolved`, present those open questions to the user in chat as a short numbered list and tell them their answers will be saved to project memory (`.adverserial-code-review/learnings.json`) so the same question is not re-asked. Do not block the report on the answer.
 

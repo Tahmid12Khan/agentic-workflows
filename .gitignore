@@ -6,6 +6,7 @@ node_modules/
 # Patterns are scoped to the dir so they do NOT case-insensitively swallow
 # commands/review.md on macOS/Windows.
 .adverserial-code-review/review-*/
+.adverserial-code-review/worktrees/
 .adverserial-code-review/cache/
 .adverserial-code-review/learnings.json
 .adverserial-code-review/last-review.json

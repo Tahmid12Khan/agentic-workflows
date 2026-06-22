@@ -70,11 +70,14 @@
       },
       "additionalProperties": false
     },
-    "report": {
+    "worktree": {
       "type": "object",
+      "description": "Run the review in a git worktree checked out from the remote's latest base/head, so it sees the most recent pushed code.",
       "properties": {
-        "markdown": { "type": "string" },
-        "html": { "type": "string" }
+        "enabled": { "type": "boolean" },
+        "remote": { "type": "string" },
+        "base_dir": { "type": "string" },
+        "keep": { "type": "boolean" }
       },
       "additionalProperties": false
     },
@@ -96,12 +99,11 @@
     },
     "trackers": {
       "type": "object",
-      "description": "Issue-tracker connectors. Tokens come from env vars, never the config file.",
+      "description": "Issue-tracker key patterns. Tickets are fetched via MCP by the orchestrator — no API tokens are stored or used.",
       "properties": {
         "clickup": {
           "type": "object",
           "properties": {
-            "token_env": { "type": "string" },
             "key_pattern": { "type": "string" }
           },
           "additionalProperties": false
@@ -109,9 +111,6 @@
         "jira": {
           "type": "object",
           "properties": {
-            "base_url": { "type": "string" },
-            "email_env": { "type": "string" },
-            "token_env": { "type": "string" },
             "key_pattern": { "type": "string" }
           },
           "additionalProperties": false

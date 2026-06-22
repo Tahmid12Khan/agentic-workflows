@@ -101,6 +101,38 @@ test('reports show PR number and start/finish timestamps from meta', () => {
   assert.match(html, /14:02:01 GMT/);
 });
 
+test('reports state whether each enabled tracker was used (off ones omitted)', () => {
+  const context = {
+    trackerUsage: {
+      clickup: { status: 'used', detail: '2 ticket(s) via MCP' },
+      jira: { status: 'skipped-no-mcp' },
+    },
+  };
+  const md = renderReport({ findings, criteria, tier: 'standard', context });
+  assert.match(md, /ClickUp: used \(2 ticket\(s\) via MCP\)/);
+  assert.match(md, /Jira: skipped — MCP server not connected/);
+  const html = renderHtml({ findings, criteria, tier: 'standard', context });
+  assert.match(html, /ClickUp: used/);
+  assert.match(html, /Jira: skipped/);
+  // an 'off' tracker is not mentioned
+  const off = renderReport({ findings, criteria, tier: 'standard', context: { trackerUsage: { clickup: { status: 'off' }, jira: { status: 'off' } } } });
+  assert.doesNotMatch(off, /ClickUp|Jira/);
+});
+
+test('reports name the worktree(s) the review ran in', () => {
+  const worktrees = [{
+    name: 'review-pr-7-feature-abc12345',
+    path: '.adverserial-code-review/worktrees/review-pr-7-feature-abc12345',
+    baseRef: 'origin/main', headRef: 'origin/feature',
+  }];
+  const md = renderReport({ findings, criteria, tier: 'standard', worktrees });
+  assert.match(md, /## Context used/);
+  assert.match(md, /Worktree review-pr-7-feature-abc12345/);
+  assert.match(md, /origin\/feature vs origin\/main/);
+  const html = renderHtml({ findings, criteria, tier: 'standard', worktrees });
+  assert.match(html, /Worktree review-pr-7-feature-abc12345/);
+});
+
 test('needs-input items render even as bare strings or sparse objects (no empty cards)', () => {
   const nh = ['Should deleting a user cascade to their orders?', { verify: { passes: 3, real: 1, refuted: 1 } }];
   const md = renderReport({ findings, criteria, tier: 'high', needsHuman: nh });
