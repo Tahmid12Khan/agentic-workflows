@@ -14,7 +14,7 @@ A Claude Code **plugin** for advisory, **criticality-aware** code review. It und
 - **Groups changes by intent** — separates the primary intent from **extra/unexplained changes** and scrutinizes the extras (scope-creep control).
 - **Reviews every dimension** — 17 dimensions (correctness, security, tests, concurrency, perf, DB/migrations, API-compat, types, deps/CVE, observability, a11y, …), each a dedicated bundled agent, dispatched only when the change warrants it.
 - **Runs real tools** — `npm audit` / `pip-audit` feed the dependency dimension.
-- **Bounded adversarial verification** (high/critical tiers) — findings it isn't sure about get an adversarial second (and at most third) look that tries to *refute* them, each from a **dimension-appropriate lens** (security→taint, concurrency→interleaving, …) rather than an identical re-read. Confirmed → kept; refuted → dropped; a **critical/important finding is not dropped on a single refuter** (when escalation is enabled and a 2nd look is affordable, a lone refutation → needs-human); a still-split result is surfaced to you, never silently dropped. Cap: **3 looks and 3 subagents per aspect**, decided in code via `route.mjs spawn`. (Lower tiers ship at the ≥80 confidence gate without a refutation pass — the cost trade-off.)
+- **Verify-all on non-trivial tiers** — on every tier where `plan.runVerify` is true, **every finding gets its own dedicated verification agent** (not just uncertain ones). Each verifier attacks from a **dimension-appropriate lens** (security→taint, concurrency→interleaving, …). Confirmed → kept; refuted → dropped; a **critical/important finding is not dropped on a single refuter** (when escalation is enabled and a 2nd look is affordable, a lone refutation → needs-human); a still-split result is surfaced to you, never silently dropped. Cap: **≤ 3 looks and ≤ 3 subagents per aspect**, enforced in code. (Trivial/low tiers skip the verify pass — the cost trade-off.)
 - **Exhaustive mode** (`--exhaustive`, auto at `critical`) — opt-in ultrareview-parity passes that trade tokens for fewer misses: a **completeness critic** (what dimension/criterion/taint did we miss?), **generative verify** (a verifier may surface an adjacent finding, not just refute), a **taint/data-flow** verifier for security findings, and **loop-until-dry** re-sweeps. Off by default so normal reviews stay cheap.
 - **Scales to large diffs** — shards a big change into coherent review units; no nested-agent sprawl.
 - **Remembers** — per-project memory suppresses accepted false-positives, tags recurring findings, and stores open questions so it doesn't re-ask.
@@ -126,20 +126,24 @@ prints the folder path, a one-line summary, and the verdict (`APPROVE` / `WARN` 
 ## How it works
 
 ```
-INTAKE → CONTEXT → TRIAGE → INTENT → REVIEW (fan-out) → VERIFY (bounded) → SYNTHESIZE → DELIVER
-preflight  gather    plan    harvest/    reviewers       adversarial        rollup       report/gate/
-+worktree  +memory            group/biz   (per dim×shard)  refute (≤3)                    comments/notify
+INTAKE → CONTEXT → TRIAGE → [Workflow: INTENT → REVIEW (fan-out) → VERIFY (all findings) → SYNTHESIZE → REPORT]
+preflight  gather    plan                harvest/    reviewers         separate agent           rollup       report.mjs
++worktree  +memory                       group/biz   (per dim×shard)   per finding (≤3 caps)                 /gate/comments
 +scan
 ```
+
+`/review` is a **thin dispatcher**: it runs the deterministic scripts (steps 1–3), then hands the fan-out to a Workflow (`lib/review-workflow.mjs`). The main agent never assembles report payloads by hand.
 
 1. **Preflight + worktree** — verify node/git (gh, scanners optional); then, unless `--no-worktree`, `worktree.mjs` fetches the PR's base + head from the remote and checks out a throwaway git worktree at the **latest pushed** head — the review reads code and computes the diff there, then the worktree is removed (its name is recorded in the report).
 2. **Context** — `gather.mjs` pulls PR body, **existing comments**, commits, and ClickUp/Jira **issue keys** (the tickets are then fetched **via MCP — no API tokens**); `memory.mjs` loads prior learnings; `scan.mjs` runs dependency CVE scans.
 3. **Triage** (`plan.mjs` + `triage.mjs`) — diff → signals → tier, dimensions, per-dim model, **shards**, and the verification/escalation budgets. `triage-classifier` (haiku) can raise the tier on judgment.
-4. **Intent** — `intent-harvester` (stated vs derived + mismatches), `intent-grouper` (primary vs extra intents), `business-logic-analyzer` (assumptions + open questions).
-5. **Review** — `correctness-reviewer` always; the planned specialist agents per dimension; one pass per shard for large diffs; extra-intent groups get focused scrutiny.
-6. **Verify** — `finding-verifier` adversarially tries to refute the unsure findings. **≤ 3 looks / ≤ 3 subagents per aspect.** Survivors kept, refuted dropped, still-split → "needs human".
-7. **Synthesize** — `review-synthesizer` dedupes, builds the requirement→code matrix, separates findings from open questions, emits a verdict.
-8. **Deliver** (`report.mjs`) — writes `review.md` + `review.html` into a per-run folder `.adverserial-code-review/review-<YYYY-MM-DD>/review-<n>[-pr-<num>]/` (each report carries the PR number and start/finish timestamps) + terminal summary; `--gate` → exit code; `--comment` → inline comments via `pr-comment-author` + `comments.mjs`; records this run to memory; surfaces open questions to you.
+4. **Workflow fan-out** (`lib/review-workflow.mjs`) — the Workflow owns the remainder:
+   - **Intent** — `intent-harvester` (stated vs derived + mismatches), `intent-grouper` (primary vs extra intents), `business-logic-analyzer` (assumptions + open questions).
+   - **Review** — `correctness-reviewer` always; the planned specialist agents per dimension; one pass per shard for large diffs; extra-intent groups get focused scrutiny.
+   - **Verify (verify-all)** — on non-trivial tiers (`plan.runVerify` true), **every finding gets its own verification agent** — not just the uncertain ones. A separate `finding-verifier` (or `taint-verifier` for D3 security) adversarially tries to refute each finding. Cap: **≤ 3 looks and ≤ 3 subagents per aspect**; findings still-split → "needs human".
+   - **Synthesize** — `review-synthesizer` dedupes, builds the requirement→code matrix, separates findings from open questions, emits a verdict.
+   - **Report** (`report.mjs`) — writes `review.md` + `review.html` into a per-run folder `.adverserial-code-review/review-<YYYY-MM-DD>/review-<n>[-pr-<num>]/` + terminal summary. The report **always** includes an "Agents & coverage" section listing which agents ran and which did not (and why). `report.mjs` takes no `--out`/`--html` flags; the per-run folder is always written.
+5. **Deliver** — main agent relays `folderPath` + verdict + `notes`; `--gate` → exit code; `--comment` → inline comments via `pr-comment-author` + `comments.mjs`; records this run to memory; surfaces open questions to you.
 
 ### Tiers (the token-saving brain)
 
@@ -203,6 +207,8 @@ lib/
   scan.mjs        npm/pip dependency CVE scan
   render.mjs      findings → review.md + review.html + verdict (pure)
   report.mjs      render + gate + memory record (CLI)
+  review-workflow.mjs     Workflow DSL — fan-out (intent/review/verify/synthesize/report)
+  review-orchestration.mjs  pure helpers for the Workflow (canonical + unit-tested)
   comments.mjs    inline PR comments via gh (CLI)
 .adverserial-code-review/    config.schema.json, config.json (dogfood)
 tests/      node:test unit tests
