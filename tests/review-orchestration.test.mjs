@@ -32,6 +32,18 @@ test('buildReportPayload throws without plan or agentRuns', () => {
   assert.throws(() => buildReportPayload({ plan: {} }), /agentRuns/);
 });
 
+import { readFileSync } from 'node:fs';
+test('review-workflow.mjs declares a valid meta with 5 phases', () => {
+  const src = readFileSync(new URL('../lib/review-workflow.mjs', import.meta.url), 'utf8');
+  assert.match(src, /export const meta = \{/);
+  for (const p of ['Intent', 'Review', 'Verify', 'Synthesize', 'Report']) {
+    assert.ok(src.includes(`title: '${p}'`), `meta must list phase ${p}`);
+  }
+  // inlined helpers must match the canonical signatures
+  assert.match(src, /function expandAspects\(/);
+  assert.match(src, /const findingKey =/);
+});
+
 test('buildReportPayload assembles all fields', () => {
   const p = buildReportPayload({
     plan: { tier: 'high', gate: { block_on: ['critical'] }, learning: { store: 's' }, range: 'a..b' },
