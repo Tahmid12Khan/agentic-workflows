@@ -3,11 +3,52 @@
 // so they work regardless of how node is installed. No external deps, no network.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdtempSync, existsSync, readFileSync, rmSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+const REPORT = new URL('../lib/report.mjs', import.meta.url).pathname;
+
+function runReport(payload, { cwd, args = [] } = {}) {
+  return spawnSync(process.execPath, [REPORT, ...args], {
+    input: JSON.stringify(payload), cwd, encoding: 'utf8',
+  });
+}
+
+const validPayload = (over = {}) => ({
+  findings: [], criteria: [], tier: 'standard',
+  summary: 'ok', context: {},
+  plan: { tier: 'standard', dimensions: ['D1'], dimensionLabels: { D1: 'Intent' },
+          dimensionAgents: { D1: 'correctness-reviewer' }, models: { D1: 'sonnet' },
+          runVerify: false, sharded: false, shards: [], agents: ['correctness-reviewer'] },
+  agentRuns: { 'correctness-reviewer': 1 },
+  ...over,
+});
+
+test('report.mjs exits 2 when plan is missing', () => {
+  const { plan, ...noPlan } = validPayload();
+  const r = runReport(noPlan, { cwd: mkdtempSync(join(tmpdir(), 'acr-')) });
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /plan/i);
+});
+
+test('report.mjs exits 2 when agentRuns is missing', () => {
+  const { agentRuns, ...noRuns } = validPayload();
+  const r = runReport(noRuns, { cwd: mkdtempSync(join(tmpdir(), 'acr-')) });
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /agentRuns/i);
+});
+
+test('report.mjs ignores --out/--html and writes the per-run folder', () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'acr-'));
+  const r = runReport(validPayload(), { cwd, args: ['--out', 'REVIEW.md', '--html', 'REVIEW.html'] });
+  assert.equal(r.status, 0);
+  assert.ok(!existsSync(join(cwd, 'REVIEW.md')), 'must NOT write REVIEW.md');
+  const dateDirs = readdirSync(join(cwd, '.adverserial-code-review')).filter((d) => d.startsWith('review-'));
+  assert.ok(dateDirs.length === 1, 'must create the per-run date folder');
+});
 
 const LIB = fileURLToPath(new URL('../lib/', import.meta.url));
 const REPO = fileURLToPath(new URL('../', import.meta.url));
@@ -59,28 +100,42 @@ test('scan.mjs returns a JSON envelope even with no scanner', () => {
   } finally { rmSync(tmp, { recursive: true, force: true }); }
 });
 
-test('report.mjs writes REVIEW.md + REVIEW.html and blocks on a critical finding', () => {
+test('report.mjs writes review.md + review.html and blocks on a critical finding', () => {
   const tmp = mkdtempSync(join(tmpdir(), 'acr-report-'));
   try {
+    const plan = { tier: 'critical', dimensions: ['D3'], dimensionLabels: { D3: 'Security' },
+                   dimensionAgents: { D3: 'vuln-reviewer' }, models: { D3: 'sonnet' },
+                   runVerify: false, sharded: false, shards: [], agents: ['vuln-reviewer'] };
     const input = JSON.stringify({
       tier: 'critical',
       findings: [{ dimension: 'D3', severity: 'critical', file: 'a.ts', line: 3, title: 'SQLi', confidence: 92, evidence: 'concat', fix: 'param' }],
       criteria: [{ id: 'AC1', text: 'x', covered: true }],
       needsHuman: [{ question: 'intended?', file: 'b.ts', line: 9, verify: { passes: 3, real: 1, refuted: 1 } }],
       gate: { block_on: ['critical'], warn_on: ['high'] },
+      plan,
+      agentRuns: { 'vuln-reviewer': 1 },
     });
-    const out = run('report.mjs', ['--out', join(tmp, 'REVIEW.md'), '--html', join(tmp, 'REVIEW.html')], { input, cwd: tmp });
+    const out = run('report.mjs', ['--base-dir', join(tmp, '.adverserial-code-review')], { input, cwd: tmp });
     assert.match(out, /Verdict: BLOCK/);
     assert.match(out, /ACTION: 1 item/);
-    assert.ok(existsSync(join(tmp, 'REVIEW.md')));
-    assert.ok(existsSync(join(tmp, 'REVIEW.html')));
-    assert.match(readFileSync(join(tmp, 'REVIEW.html'), 'utf8'), /Needs your input/);
+    const dateDirs = readdirSync(join(tmp, '.adverserial-code-review')).filter((d) => d.startsWith('review-'));
+    assert.ok(dateDirs.length === 1);
+    const dateDir = join(tmp, '.adverserial-code-review', dateDirs[0]);
+    const runDirs = readdirSync(dateDir);
+    assert.ok(runDirs.length === 1);
+    const runDir = join(dateDir, runDirs[0]);
+    assert.ok(existsSync(join(runDir, 'review.md')));
+    assert.ok(existsSync(join(runDir, 'review.html')));
+    assert.match(readFileSync(join(runDir, 'review.html'), 'utf8'), /Needs your input/);
   } finally { rmSync(tmp, { recursive: true, force: true }); }
 });
 
 test('report.mjs writes into review-{date}/review-{counter}-pr-{n}/review.{md,html}', () => {
   const tmp = mkdtempSync(join(tmpdir(), 'acr-dir-'));
   try {
+    const plan = { tier: 'high', dimensions: ['D2'], dimensionLabels: { D2: 'Correctness' },
+                   dimensionAgents: { D2: 'correctness-reviewer' }, models: { D2: 'sonnet' },
+                   runVerify: false, sharded: false, shards: [], agents: ['correctness-reviewer'] };
     const input = JSON.stringify({
       tier: 'high',
       findings: [{ dimension: 'D2', severity: 'minor', file: 'a.ts', line: 1, title: 'nit', confidence: 90 }],
@@ -88,6 +143,8 @@ test('report.mjs writes into review-{date}/review-{counter}-pr-{n}/review.{md,ht
       prNumber: 7,
       startedAt: '2026-06-21T10:00:00Z',
       gate: { block_on: ['critical'], warn_on: ['high'] },
+      plan,
+      agentRuns: { 'correctness-reviewer': 1 },
     });
     const out = run('report.mjs', ['--base-dir', tmp], { input, cwd: tmp });
     const dateDirs = readdirSync(tmp).filter((d) => /^review-\d{4}-\d{2}-\d{2}$/.test(d));
