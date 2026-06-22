@@ -5,7 +5,7 @@ description: Set up code review in this project — checks your environment and 
 Initialize the adversarial-code-review plugin for the current repository.
 
 ## 1. Environment check
-Run `node "${CLAUDE_PLUGIN_ROOT:-$HOME/.claude/adversarial-code-review}/lib/preflight.mjs"` and show the report. If a required item is missing (✗), tell the user how to fix it before continuing.
+Run `command node "${CLAUDE_PLUGIN_ROOT:-$HOME/.claude/adversarial-code-review}/lib/preflight.mjs"` and show the report. If a required item is missing (✗), tell the user how to fix it before continuing.
 
 ## 2. Scaffold the config
 - If `.adverserial-code-review/config.json` already exists, print it and ask whether to overwrite. Do nothing else unless they confirm.
