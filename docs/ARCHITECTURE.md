@@ -7,7 +7,7 @@ reading a line of source.
 
 > **One-sentence summary:** it reads a diff, measures how dangerous the change is,
 > reviews only the dimensions that matter at a depth that matches the risk,
-> adversarially re-checks the findings it isn't sure about (bounded to 3 looks),
+> adversarially re-checks every finding with its own verifier on non-trivial tiers (bounded to 3 looks),
 > and reports the result — **it never edits your code.**
 
 - New here? Start at [Mental model](#mental-model).
@@ -56,8 +56,7 @@ flowchart LR
 
 ## The pipeline — intake to verdict
 
-Every review runs the same eight stages. Each stage runs only when the change earns it;
-a trivial change exits after stage 3.
+Every review runs the same eight stages. Stages 1–3 are run by the main agent (`commands/review.md`) as deterministic scripts; stages 4–8 run inside the Workflow (`lib/review-workflow.mjs`) dispatched in step 4. A trivial change exits after stage 3.
 
 ```mermaid
 flowchart TD
@@ -66,7 +65,7 @@ flowchart TD
   C["3 · TRIAGE<br/><i>plan.mjs + triage.mjs</i><br/>diff → tier, dimensions, models,<br/>shards, verify/escalation budgets"]
   D["4 · INTENT<br/><i>intent-harvester · intent-grouper<br/>· business-logic-analyzer</i><br/>stated vs actual, primary vs extra,<br/>open questions"]
   E["5 · REVIEW<br/><i>correctness-reviewer + specialists</i><br/>one isolated pass per dimension × shard"]
-  F["6 · VERIFY<br/><i>finding-verifier / taint-verifier</i><br/>adversarially refute only the unsure findings"]
+  F["6 · VERIFY<br/><i>finding-verifier / taint-verifier</i><br/>adversarially refute every finding (verify-all)"]
   G["7 · SYNTHESIZE<br/><i>review-synthesizer</i><br/>dedupe, traceability matrix,<br/>needs-human list, one verdict"]
   H["8 · DELIVER<br/><i>report.mjs · comments.mjs · pr-comment-author</i><br/>review.md + review.html (per-run folder),<br/>gate exit code, inline comments, memory write"]
 
@@ -86,10 +85,10 @@ What each stage contributes:
 2. **Context** — `gather.mjs` pulls the PR body, **existing PR/inline comments**, ClickUp/Jira issue keys (whose tickets the orchestrator then fetches via MCP — no API tokens), and project rules into one bundle; `memory.mjs` loads prior learnings (recurring findings, accepted false-positives, open questions); `scan.mjs` runs `npm audit` / `pip-audit` when available to seed the dependency dimension. Missing tools degrade gracefully and are noted in the report.
 3. **Triage** — the brain. See [The triage brain](#the-triage-brain).
 4. **Intent** — builds the acceptance-criteria model: what the change *says* it does (PR/comments/tickets) vs. what the code *actually* does, and where the two diverge. Splits the primary intent from **extra / unexplained** changes and flags the extras for scope-creep control. Material business-logic ambiguities become *questions for you*, not silent assumptions.
-5. **Review** — fans out reviewers. The always-on `correctness-reviewer` plus one specialist per planned dimension, each on the model `triage` chose for that dimension, each on its own shard for large diffs. Every reviewer gets a **clean packet** (intent + criteria + diff) and never the chat history.
-6. **Verify** — the bounded adversarial pass. See [Bounded adversarial verification](#bounded-adversarial-verification).
+5. **Review** — fans out reviewers inside the Workflow. The always-on `correctness-reviewer` plus one specialist per planned dimension, each on the model `triage` chose for that dimension, each on its own shard for large diffs. Every reviewer gets a **clean packet** (intent + criteria + diff) and never the chat history.
+6. **Verify (verify-all)** — the Workflow spawns a **separate verification agent for every finding** (not just uncertain ones) on tiers where `plan.runVerify` is true. Each verifier attacks from a dimension-appropriate lens; the ≤ 3 subagents/aspect cap is enforced in code. See [Bounded adversarial verification](#bounded-adversarial-verification).
 7. **Synthesize** — `review-synthesizer` dedupes, builds the requirement→code traceability matrix, separates confident findings from open questions, and emits one verdict.
-8. **Deliver** — `report.mjs` writes `review.md` + `review.html` into a per-run folder `.adverserial-code-review/review-<YYYY-MM-DD>/review-<n>[-pr-<num>]/` (an outer folder per day, an inner folder per run; each report names the PR and its start/finish times), prints a terminal summary, and (with `--gate`) returns the gate as an exit code; `--comment` posts inline PR comments via `pr-comment-author` + `comments.mjs`; the run is recorded to memory; unresolved questions are surfaced to you.
+8. **Deliver** — the Workflow calls `report.mjs` (via an executor agent) which writes `review.md` + `review.html` into a per-run folder `.adverserial-code-review/review-<YYYY-MM-DD>/review-<n>[-pr-<num>]/` (an outer folder per day, an inner folder per run; each report names the PR and its start/finish times). The report **always** includes an "Agents & coverage" section (Ran / Did not run). `report.mjs` accepts no `--out`/`--html` flags; the per-run folder is always written. Terminal summary + gate exit code (with `--gate`); `--comment` posts inline PR comments via `pr-comment-author` + `comments.mjs`; the run is recorded to memory; unresolved questions are surfaced to you.
 
 ---
 
@@ -219,12 +218,19 @@ reviews stay cheap — and the verification pass only kicks in from **High** up.
 ## Bounded adversarial verification
 
 The plugin doesn't trust its own first pass — but it doesn't re-run the whole review
-either. It re-checks **only the aspects a reviewer was unsure about**, and looks at any
-one aspect **at most three times total** (1 review + ≤ 2 verifier passes), with **at most
+either. On every non-trivial tier (`plan.runVerify` true) the Workflow refutes **every
+finding** with its **own separate verifier agent** (verify-all), and looks at any one
+aspect **at most three times total** (1 review + ≤ 2 verifier passes), with **at most
 3 subagents** on it. Both caps are enforced in code (`verify.mjs` slices verdicts to the
-budget; `route.mjs spawn` is the ledger the orchestrator must clear before every dispatch).
+budget; the per-aspect spawn ledger in `lib/review-workflow.mjs` — `canSpawn`/`recordSpawn`,
+canonically `lib/review-orchestration.mjs` — must clear before every dispatch).
 
 ### Which findings get a second look (`selectForVerification`)
+
+The live verify-all policy refutes every finding, so on non-trivial tiers this gate is
+moot. The pure `selectForVerification` helper (still exported + unit-tested) encodes the
+*priority* a budget-constrained run would follow — uncertain, low-confidence, or
+high-severity-on-a-risk-path findings first:
 
 ```mermaid
 flowchart TD
@@ -234,10 +240,8 @@ flowchart TD
   C -->|yes| V
   C -->|no| HOT{"high-severity<br/>AND on a risk path?"}
   HOT -->|yes| V
-  HOT -->|no| K[[keep as-is, no verify]]
+  HOT -->|no| K[[lowest priority]]
 ```
-
-High-confidence findings off the risk paths are **not** re-checked — they ship directly.
 
 ### The adversarial lens
 
@@ -410,6 +414,8 @@ the source or filing a bug.
 | which findings to re-verify | `lib/verify.mjs` | `selectForVerification`, `lensFor` |
 | a finding's fate after verify | `lib/verify.mjs` | `resolveVerification`, `partition` |
 | extra-intent scrutiny / forced checks / spawn cap | `lib/route.mjs` | `extraScrutinyTargets`, `forcedChecks`, `recordSpawn` |
+| fan-out orchestration (intent → review → verify → report) | `lib/review-workflow.mjs` | Workflow DSL (no shebang/`main`; harness globals) |
+| pure helpers for the Workflow (importable + unit-tested) | `lib/review-orchestration.mjs` | `expandAspects`, `findingKey`, `canSpawn`, `recordSpawn`, `buildReportPayload` |
 | findings → report + verdict | `lib/render.mjs` | `renderReport`, `renderHtml`, `renderVerdict` |
 | render + gate + memory record | `lib/report.mjs` | (CLI) |
 | inline PR comments via `gh` | `lib/comments.mjs` | (CLI) |
@@ -418,7 +424,7 @@ the source or filing a bug.
 | per-project learnings store | `lib/memory.mjs` | `findingKey`, load/record |
 | dependency CVE scan | `lib/scan.mjs` | (CLI) |
 | environment check | `lib/preflight.mjs` | (CLI) |
-| the orchestration prose | `commands/review.md` | the pipeline step by step (9 numbered sections + the `8b` completeness sweep) |
+| thin dispatcher + Workflow call | `commands/review.md` | runs deterministic scripts (steps 1–3), calls `Workflow({scriptPath:"$LIB/review-workflow.mjs", args})`, relays result |
 
 ---
 
