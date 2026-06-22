@@ -61,8 +61,8 @@ a trivial change exits after stage 3.
 
 ```mermaid
 flowchart TD
-  A["1 · INTAKE<br/><i>preflight.mjs</i><br/>verify node, git, work tree"]
-  B["2 · CONTEXT<br/><i>gather.mjs · memory.mjs · scan.mjs</i><br/>PR body, existing comments,<br/>ClickUp/Jira, prior learnings, CVE scan"]
+  A["1 · INTAKE<br/><i>preflight.mjs · worktree.mjs</i><br/>verify env; check out a worktree of<br/>the remote's latest base/head"]
+  B["2 · CONTEXT<br/><i>gather.mjs · memory.mjs · scan.mjs</i><br/>PR body, existing comments,<br/>ClickUp/Jira (via MCP), learnings, CVE scan"]
   C["3 · TRIAGE<br/><i>plan.mjs + triage.mjs</i><br/>diff → tier, dimensions, models,<br/>shards, verify/escalation budgets"]
   D["4 · INTENT<br/><i>intent-harvester · intent-grouper<br/>· business-logic-analyzer</i><br/>stated vs actual, primary vs extra,<br/>open questions"]
   E["5 · REVIEW<br/><i>correctness-reviewer + specialists</i><br/>one isolated pass per dimension × shard"]
@@ -82,14 +82,38 @@ flowchart TD
 
 What each stage contributes:
 
-1. **Intake** — `preflight.mjs` checks Node + git are present (and notes whether `gh` and the CVE scanners are available). Hard-fails fast so you don't waste a review on a broken environment.
-2. **Context** — `gather.mjs` pulls the PR body, **existing PR/inline comments**, linked ClickUp/Jira tickets, and project rules into one bundle; `memory.mjs` loads prior learnings (recurring findings, accepted false-positives, open questions); `scan.mjs` runs `npm audit` / `pip-audit` when available to seed the dependency dimension. Missing tools degrade gracefully and are noted in the report.
+1. **Intake** — `preflight.mjs` checks Node + git are present (and notes whether `gh` and the CVE scanners are available). Hard-fails fast so you don't waste a review on a broken environment. Then, unless disabled, `worktree.mjs` fetches the PR's base + head from the remote and checks out a throwaway git worktree at the **latest pushed** head — the rest of the review reads code and computes the diff there, so it never reviews a stale local checkout. Its name is recorded in the report and it is removed afterwards (`keep:true` keeps it).
+2. **Context** — `gather.mjs` pulls the PR body, **existing PR/inline comments**, ClickUp/Jira issue keys (whose tickets the orchestrator then fetches via MCP — no API tokens), and project rules into one bundle; `memory.mjs` loads prior learnings (recurring findings, accepted false-positives, open questions); `scan.mjs` runs `npm audit` / `pip-audit` when available to seed the dependency dimension. Missing tools degrade gracefully and are noted in the report.
 3. **Triage** — the brain. See [The triage brain](#the-triage-brain).
 4. **Intent** — builds the acceptance-criteria model: what the change *says* it does (PR/comments/tickets) vs. what the code *actually* does, and where the two diverge. Splits the primary intent from **extra / unexplained** changes and flags the extras for scope-creep control. Material business-logic ambiguities become *questions for you*, not silent assumptions.
 5. **Review** — fans out reviewers. The always-on `correctness-reviewer` plus one specialist per planned dimension, each on the model `triage` chose for that dimension, each on its own shard for large diffs. Every reviewer gets a **clean packet** (intent + criteria + diff) and never the chat history.
 6. **Verify** — the bounded adversarial pass. See [Bounded adversarial verification](#bounded-adversarial-verification).
 7. **Synthesize** — `review-synthesizer` dedupes, builds the requirement→code traceability matrix, separates confident findings from open questions, and emits one verdict.
 8. **Deliver** — `report.mjs` writes `review.md` + `review.html` into a per-run folder `.adverserial-code-review/review-<YYYY-MM-DD>/review-<n>[-pr-<num>]/` (an outer folder per day, an inner folder per run; each report names the PR and its start/finish times), prints a terminal summary, and (with `--gate`) returns the gate as an exit code; `--comment` posts inline PR comments via `pr-comment-author` + `comments.mjs`; the run is recorded to memory; unresolved questions are surfaced to you.
+
+---
+
+## Reviewing the latest pushed code (the worktree)
+
+A review is only as good as the code it reads. Reviewing your **local** checkout can mean
+reviewing a stale branch — or missing a fix that only exists on the remote. So, unless turned
+off, the pipeline reviews a fresh checkout of the **remote's latest** base and head.
+
+`lib/worktree.mjs` (a deterministic CLI) does three things on `setup`:
+
+1. **Fetch** the PR's base + head from the remote (`git fetch --no-tags <remote> <base> <head>`).
+2. **Check out** a detached **git worktree** at `<remote>/<head>` under `<base_dir>` (default `.adverserial-code-review/worktrees/`), named `review-[pr-<n>-]<head>-<sha8>`.
+3. **Return** the path, the resolved `baseRef`/`headRef`, and the diff `range` (`baseRef..HEAD`).
+
+The rest of the pipeline (triage, gather, the reviewers, the diff) runs **inside that worktree**,
+so it always sees the most recent pushed code. The **report is written from the main repo** so it
+survives teardown, and the worktree's **name is recorded in the report** (under *Context used*).
+On finish the worktree is removed (`remove --path`), unless `worktree.keep` is `true`.
+
+It is **best-effort**: if the fetch fails (offline / no remote) it notes the skip and falls back
+to whatever ref resolves locally. Set `worktree.enabled: false` or pass `--no-worktree` to review
+the local working tree instead — required when reviewing **uncommitted** changes, since a worktree
+only sees committed refs. Config: `worktree` → `{ enabled, remote, base_dir, keep }`.
 
 ---
 
@@ -361,10 +385,10 @@ optional and falls back to a sensible default.
 | `escalation` | spawn-on-doubt cap (subagents per aspect). |
 | `large_diff` | `shard_threshold_loc`, `max_shards`. |
 | `scan` | run `deps` / `tests` / `lint` tools when available (advisory). |
-| `report` | output paths for the markdown + HTML reports. |
+| `worktree` | run the review in a git worktree checked out from the remote's latest base/head: `enabled`, `remote`, `base_dir`, `keep`. |
 | `learning` | per-project memory: `enabled`, `store` path. |
 | `notify` | `ask_on_unresolved` — surface open questions instead of assuming. |
-| `trackers` | ClickUp/Jira connectors. **Tokens come from env vars, never the config file.** |
+| `trackers` | ClickUp/Jira key patterns. **Tickets are fetched via MCP by the orchestrator — no API tokens stored or used.** |
 | `exhaustive` | Tier C passes: `on_critical`, `max_discovery_rounds`. |
 
 The schema also reserves a `knowledge_packs` key; it is currently unused (no `lib/`
@@ -390,6 +414,7 @@ the source or filing a bug.
 | render + gate + memory record | `lib/report.mjs` | (CLI) |
 | inline PR comments via `gh` | `lib/comments.mjs` | (CLI) |
 | PR / comments / trackers → context | `lib/gather.mjs` | (CLI) |
+| latest-code worktree setup / teardown | `lib/worktree.mjs` | `worktreeName`, `fetchArgs`, `addArgs`, `removeArgs` |
 | per-project learnings store | `lib/memory.mjs` | `findingKey`, load/record |
 | dependency CVE scan | `lib/scan.mjs` | (CLI) |
 | environment check | `lib/preflight.mjs` | (CLI) |
