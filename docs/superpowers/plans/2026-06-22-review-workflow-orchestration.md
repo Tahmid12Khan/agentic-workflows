@@ -18,6 +18,7 @@
 - **Exit codes**: `2` = usage/argument error, `1` = hard failure / gate BLOCK, `0` = success.
 - **Module convention**: runnable modules have a shebang + header block, pure functions first, thin `main` last guarded by `if (import.meta.url === \`file://${process.argv[1]}\`)`. Pure-only modules have no shebang/`main` and a leading `// Pure:` comment. `arg(name, def)` is a tiny local helper, no flag library.
 - **Version source of truth**: `.claude-plugin/plugin.json` (currently `0.2.0`). Do not bump here; `/release-plugin` handles it.
+- **Node invocation — use bare `node`, NOT `command node`** (binding; overrides any `command node` shown in the task code blocks below). Evidence: on machines with a stale old node on PATH (this one has v14 at `/usr/local/bin`), `command node` bypasses the nvm lazy-loader and resolves the OLD node; bare `node` triggers the loader → correct version. `preflight.mjs` already guards node ≥ 18. This reverses commit 16b3511 — **Task 5 must also revert `commands/review-init.md` from `command node` back to `node`.**
 
 ---
 
@@ -599,13 +600,13 @@ const harvester = await agent(
 
 const [grouper, businessLogic] = await parallel([
   () => agent(
-    `Cluster this diff into intent groups (primary vs EXTRA), flag groups needing scrutiny. Criteria: ${harvester}. Diff:\n${diff}`,
+    `Cluster this diff into intent groups (primary vs EXTRA), flag groups needing scrutiny. Criteria: ${JSON.stringify(harvester)}. Diff:\n${diff}`,
     { agentType: 'intent-grouper', phase: 'Intent' },
   ).then((r) => (bump('intent-grouper'), r)),
   () => (plan.tier === 'low'
     ? Promise.resolve(null)
     : agent(
-      `Model the domain/business logic; list assumptions + OPEN QUESTIONS (do not guess on material ambiguity). Criteria: ${harvester}. Diff:\n${diff}`,
+      `Model the domain/business logic; list assumptions + OPEN QUESTIONS (do not guess on material ambiguity). Criteria: ${JSON.stringify(harvester)}. Diff:\n${diff}`,
       { agentType: 'business-logic-analyzer', phase: 'Intent' },
     ).then((r) => (bump('business-logic-analyzer'), r))),
 ]);
@@ -621,7 +622,7 @@ const reviewed = await pipeline(
   // stage 1: review one aspect
   (a) => agent(
     `Review ONLY these changed files for dimension ${a.dim}: ${JSON.stringify(a.files)}. ` +
-    `Acceptance criteria + mismatches: ${harvester}. Relevant intent groups: ${grouper}. ` +
+    `Acceptance criteria + mismatches: ${JSON.stringify(harvester)}. Relevant intent groups: ${JSON.stringify(grouper)}. ` +
     `Project rules: ${JSON.stringify(plan.projectRules)}. Diff:\n${diff}`,
     { agentType: a.agent, model: plan.models?.[a.dim], label: `review:${a.dim}:${a.shardId}`, phase: 'Review', schema: FINDINGS_SCHEMA },
   ).then((r) => { bump(a.agent); return { aspect: a, findings: r?.findings ?? [], strengths: r?.strengths ?? [] }; })
@@ -655,14 +656,14 @@ const resolveInput = JSON.stringify({
 });
 const resolved = await agent(
   `Run this EXACT command from the repo root and return ONLY its stdout JSON, nothing else:\n` +
-  `cat <<'ACR_EOF' | command node "${lib}/verify.mjs" resolve\n${resolveInput}\nACR_EOF`,
+  `cat <<'ACR_EOF' | node "${lib}/verify.mjs" resolve\n${resolveInput}\nACR_EOF`,
   { agentType: 'general-purpose', label: 'resolve', phase: 'Synthesize', schema: { type: 'object', properties: { report: { type: 'array' }, dropped: { type: 'array' }, needsHuman: { type: 'array' }, summary: { type: 'object' } }, required: ['report'] } },
 ).catch((e) => { notes.push(`resolve failed: ${e.message}`); return { report: allFindings, dropped: [], needsHuman: [], summary: {} }; });
 
 // ---------------------------------------------------------------- Synthesize
 const synth = await agent(
   `Aggregate into one deduped, severity-ranked review with a per-criterion traceability matrix. ` +
-  `Acceptance criteria: ${harvester}. Kept findings: ${JSON.stringify(resolved.report)}. ` +
+  `Acceptance criteria: ${JSON.stringify(harvester)}. Kept findings: ${JSON.stringify(resolved.report)}. ` +
   `Strengths seen: ${JSON.stringify(allStrengths)}. Business-logic open questions: ${JSON.stringify(businessLogic)}.`,
   { agentType: 'review-synthesizer', phase: 'Synthesize', schema: SYNTH_SCHEMA },
 ).then((r) => (bump('review-synthesizer'), r));
@@ -689,7 +690,7 @@ const payload = {
 };
 const reportOut = await agent(
   `Run this EXACT command from the repo root and return ONLY the folder path it prints after the arrow:\n` +
-  `cat <<'ACR_EOF' | command node "${lib}/report.mjs"${flags?.gate ? ' --gate' : ''}\n${JSON.stringify(payload)}\nACR_EOF`,
+  `cat <<'ACR_EOF' | node "${lib}/report.mjs"${flags?.gate ? ' --gate' : ''}\n${JSON.stringify(payload)}\nACR_EOF`,
   { agentType: 'general-purpose', label: 'report', phase: 'Report', schema: { type: 'object', properties: { folderPath: { type: 'string' }, verdict: { type: 'string' } }, required: ['folderPath'] } },
 ).catch((e) => { notes.push(`report failed: ${e.message}`); return { folderPath: null, verdict: 'ERROR' }; });
 
@@ -759,21 +760,21 @@ Replace everything in `commands/review.md` **after the frontmatter** (keep lines
 ````markdown
 Run a systematic, **advisory** code review of the current change. NEVER modify source code — report only. You are a thin dispatcher: run the deterministic scripts, hand the fan-out to the Workflow, relay the result. Do not assemble report payloads by hand.
 
-Bundled scripts live under `${CLAUDE_PLUGIN_ROOT:-$HOME/.claude/adversarial-code-review}/lib/`. Let `LIB` be that path. Run scripts with `command node` (not bare `node`) — `command` bypasses any shell `node` function/alias.
+Bundled scripts live under `${CLAUDE_PLUGIN_ROOT:-$HOME/.claude/adversarial-code-review}/lib/`. Let `LIB` be that path (resolve it to an absolute path). Run scripts with bare `node` — `preflight.mjs` validates node ≥ 18 and errors clearly if the resolved node is too old. (Do NOT use `command node`: on machines with a stale old node on PATH it bypasses the nvm lazy-loader and resolves the wrong version.)
 
 ## 1. Preflight
 Capture the start time: `STARTED=$(date -u +%Y-%m-%dT%H:%M:%SZ)`.
-Run `command node "$LIB/preflight.mjs"`. If it exits non-zero, show the report and STOP.
+Run `node "$LIB/preflight.mjs"`. If it exits non-zero, show the report and STOP.
 
 ## 2. Worktree (review the latest pushed code)
-Resolve base/head and create a throwaway worktree exactly as `worktree.mjs` supports: read the `worktree` config block (defaults `enabled:true`, `remote:"origin"`, `base_dir:".adverserial-code-review/worktrees"`, `keep:false`). `--base <ref>` wins; else the PR's base/head (`gh pr view --json number,baseRefName,headRefName`); else default branch vs current branch. Skip the worktree (set `WT` empty, `worktrees=[]`) when `enabled:false`, `--no-worktree`, or reviewing uncommitted local changes. Otherwise `command node "$LIB/worktree.mjs" setup …` → set `WT=<path>`, record `worktrees`. Run steps 3 with `WT` as cwd.
+Resolve base/head and create a throwaway worktree exactly as `worktree.mjs` supports: read the `worktree` config block (defaults `enabled:true`, `remote:"origin"`, `base_dir:".adverserial-code-review/worktrees"`, `keep:false`). `--base <ref>` wins; else the PR's base/head (`gh pr view --json number,baseRefName,headRefName`); else default branch vs current branch. Skip the worktree (set `WT` empty, `worktrees=[]`) when `enabled:false`, `--no-worktree`, or reviewing uncommitted local changes. Otherwise `node "$LIB/worktree.mjs" setup …` → set `WT=<path>`, record `worktrees`. Run steps 3 with `WT` as cwd.
 
 ## 3. Deterministic inputs (run from `WT` when present)
-- `command node "$LIB/plan.mjs" --base <baseRef>` (pass through `--tier`/`--dimensions`/`--exhaustive`) → the **plan** JSON. If `plan.tier == "trivial"`: do one quick inline correctness/comment pass, build a minimal payload (still including `plan` + `agentRuns:{}`) and skip to step 5.
-- `command node "$LIB/gather.mjs" --base <baseRef>` → **bundle**; fetch linked tickets via the ClickUp/Atlassian **MCP** (never API tokens); record `trackerUsage` into the bundle. If a tracker is enabled but its MCP is absent, ask once to connect, else skip.
-- If `learning.enabled`: `command node "$LIB/memory.mjs" load <store>` → carry as context.
-- If `scan.deps`: `command node "$LIB/scan.mjs"` → seed D15 findings + notes.
-- Routing (deterministic): `echo '<grouper-or-empty>' | command node "$LIB/route.mjs" scrutiny` and `echo '{"mandatoryChecks":<plan.mandatoryChecks>}' | command node "$LIB/route.mjs" checks` → `routing = { scrutiny, checks }`.
+- `node "$LIB/plan.mjs" --base <baseRef>` (pass through `--tier`/`--dimensions`/`--exhaustive`) → the **plan** JSON. If `plan.tier == "trivial"`: do one quick inline correctness/comment pass, build a minimal payload (still including `plan` + `agentRuns:{}`) and skip to step 5.
+- `node "$LIB/gather.mjs" --base <baseRef>` → **bundle**; fetch linked tickets via the ClickUp/Atlassian **MCP** (never API tokens); record `trackerUsage` into the bundle. If a tracker is enabled but its MCP is absent, ask once to connect, else skip.
+- If `learning.enabled`: `node "$LIB/memory.mjs" load <store>` → carry as context.
+- If `scan.deps`: `node "$LIB/scan.mjs"` → seed D15 findings + notes.
+- Routing (deterministic): `echo '<grouper-or-empty>' | node "$LIB/route.mjs" scrutiny` and `echo '{"mandatoryChecks":<plan.mandatoryChecks>}' | node "$LIB/route.mjs" checks` → `routing = { scrutiny, checks }`.
 - Capture the diff text and `plan.shards`.
 
 ## 4. Hand the fan-out to the Workflow
@@ -792,8 +793,8 @@ Workflow({
 
 ## 5. Deliver
 - Relay `folderPath` + verdict + any `notes` to the user.
-- `--comment`: `echo '{"findings":[enriched],"head":"<head>","prNumber":<n>,"existingComments":[...]}' | command node "$LIB/comments.mjs"` to post inline PR comments (requires `gh`).
-- Worktree teardown: if step 2 created one and `worktree.keep` is not `true`, `command node "$LIB/worktree.mjs" remove --path "$WT"`.
+- `--comment`: `echo '{"findings":[enriched],"head":"<head>","prNumber":<n>,"existingComments":[...]}' | node "$LIB/comments.mjs"` to post inline PR comments (requires `gh`).
+- Worktree teardown: if step 2 created one and `worktree.keep` is not `true`, `node "$LIB/worktree.mjs" remove --path "$WT"`.
 - Incremental state: write `.adverserial-code-review/last-review.json` with this run's finding keys + range.
 - Notify: if `needsHuman` is non-empty and `notify.ask_on_unresolved`, present those questions as a short numbered list; their answers are saved to `.adverserial-code-review/learnings.json`.
 
@@ -805,11 +806,11 @@ Strengths-first, cite `file:line`, advisory only — never edit source.
 
 Run:
 ```bash
-grep -c "command node" commands/review.md   # expect >= 6
-grep -c "node \"\$LIB" commands/review.md    # expect 0 bare invocations
+grep -c "command node" commands/review.md   # expect 0 (bare node only)
+grep -c 'node "\$LIB' commands/review.md      # expect >= 6 (bare node invocations)
 grep -c -- "--out" commands/review.md         # expect 0 (no path override)
 ```
-Expected: `command node` present, zero bare `node "$LIB`, zero `--out`.
+Expected: zero `command node`, bare `node "$LIB` present (>= 6), zero `--out`.
 
 - [ ] **Step 3: Run the full test suite (nothing regressed)**
 
