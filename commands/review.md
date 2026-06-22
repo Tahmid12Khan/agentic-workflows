@@ -1,124 +1,45 @@
 ---
 description: Advisory criticality-aware code review of the current branch diff, with bounded adversarial verification. Flags: --base <ref> --comment --gate --tier <t> --dimensions <list> --incremental --exhaustive --no-worktree.
 ---
+Run a systematic, **advisory** code review of the current change. NEVER modify source code — report only. You are a thin dispatcher: run the deterministic scripts, hand the fan-out to the Workflow, relay the result. Do not assemble report payloads by hand.
 
-Run a systematic, **advisory** code review of the current change. NEVER modify source code — report only.
-
-Bundled scripts live under `${CLAUDE_PLUGIN_ROOT:-$HOME/.claude/adversarial-code-review}/lib/`. Let `LIB` be that path. Run scripts with `command node` (not bare `node`) — `command` bypasses any shell `node` function/alias, e.g. a lazy-nvm shim, so the scripts run regardless of how node was installed.
-
-**Hard limits (do not exceed):** for any single aspect — one dimension on one shard, the verification of one finding, or the scrutiny of one intent — dispatch **at most 3 subagents total**, and look at that aspect **at most 3 times total** (the original review + at most 2 verifier passes). Across the whole review you may use many subagents; never more than 3 on one aspect.
+Bundled scripts live under `${CLAUDE_PLUGIN_ROOT:-$HOME/.claude/adversarial-code-review}/lib/`. Let `LIB` be that path (resolve it to an absolute path). Run scripts with bare `node` — `preflight.mjs` validates node ≥ 18 and errors clearly if the resolved node is too old. (Do NOT use `command node`: on machines with a stale old node on PATH it bypasses the nvm lazy-loader and resolves the wrong version.)
 
 ## 1. Preflight
-Capture the **start time** now and keep it for the report: `STARTED=$(date -u +%Y-%m-%dT%H:%M:%SZ)`.
-Run `command node "$LIB/preflight.mjs"`. If it exits non-zero, show the report and STOP.
+Capture the start time: `STARTED=$(date -u +%Y-%m-%dT%H:%M:%SZ)`.
+Run `node "$LIB/preflight.mjs"`. If it exits non-zero, show the report and STOP.
 
-## 1b. Worktree — review the latest pushed code
-Read the `worktree` block from `.adverserial-code-review/config.json` (defaults if absent: `enabled:true`, `remote:"origin"`, `base_dir:".adverserial-code-review/worktrees"`, `keep:false`). The point is to review the change against the **latest pushed** base/head, not whatever is checked out locally.
+## 2. Worktree (review the latest pushed code)
+Resolve base/head and create a throwaway worktree exactly as `worktree.mjs` supports: read the `worktree` config block (defaults `enabled:true`, `remote:"origin"`, `base_dir:".adverserial-code-review/worktrees"`, `keep:false`). `--base <ref>` wins; else the PR's base/head (`gh pr view --json number,baseRefName,headRefName`); else default branch vs current branch. Skip the worktree (set `WT` empty, `worktrees=[]`) when `enabled:false`, `--no-worktree`, or reviewing uncommitted local changes. Otherwise `node "$LIB/worktree.mjs" setup …` → set `WT=<path>`, record `worktrees`. Run steps 3 with `WT` as cwd.
 
-- **Resolve base + head branches:**
-  - `--base <ref>` (if passed) wins for the base.
-  - else if this branch has a PR (`gh pr view --json number,baseRefName,headRefName`), use its `baseRefName` / `headRefName` (and keep its `number` for `--pr`).
-  - else base = the default branch (`main`/`master`), head = the current branch (`git rev-parse --abbrev-ref HEAD`).
-- **Skip the worktree** (review the local working tree as-is) when `enabled:false`, `--no-worktree` is passed, or you are reviewing **uncommitted** local changes — a worktree only sees committed refs. In that case set `WT` empty and `worktrees=[]`, then continue.
-- **Otherwise create it:** `command node "$LIB/worktree.mjs" setup --base <base> --head <head> --remote <remote> [--pr <n>] --dir <base_dir>` → parse `{ ok, name, path, baseRef, headRef, range, notes }`. Set `WT=<path>`. Record `worktrees=[{ name, path, baseRef, headRef, remote, base, head }]` for the report, and surface any `notes` (e.g. a fetch that failed → it fell back to local refs).
-- **Run the rest of the review with `WT` as the working directory** (steps 2–8: `cd "$WT"` for `git`/`node`/`gather`/`scan` calls and all file reads), and pass `--base <baseRef>` to `plan.mjs` so the range is `baseRef..HEAD` (HEAD is the worktree's checkout of `headRef`). Config + project rules travel into the worktree because `config.json` is committed.
-- **The report itself is written from the MAIN repo** (step 9) so it survives teardown — do NOT `cd "$WT"` for `report.mjs`.
+## 3. Deterministic inputs (run from `WT` when present)
+- `node "$LIB/plan.mjs" --base <baseRef>` (pass through `--tier`/`--dimensions`/`--exhaustive`) → the **plan** JSON. If `plan.tier == "trivial"`: do one quick inline correctness/comment pass, build a minimal payload (still including `plan` + `agentRuns:{}`) and skip to step 5.
+- `node "$LIB/gather.mjs" --base <baseRef>` → **bundle**; fetch linked tickets via the ClickUp/Atlassian **MCP** (never API tokens); record `trackerUsage` into the bundle. If a tracker is enabled but its MCP is absent, ask once to connect, else skip.
+- If `learning.enabled`: `node "$LIB/memory.mjs" load <store>` → carry as context.
+- If `scan.deps`: `node "$LIB/scan.mjs"` → seed D15 findings + notes.
+- Routing (deterministic): `echo '<grouper-or-empty>' | node "$LIB/route.mjs" scrutiny` and `echo '{"mandatoryChecks":<plan.mandatoryChecks>}' | node "$LIB/route.mjs" checks` → `routing = { scrutiny, checks }`.
+- Capture the diff text and `plan.shards`.
 
-## 2. Plan
-Run `command node "$LIB/plan.mjs" --base <ref-or-omit>` (use the worktree's `baseRef` from step 1b when present; pass through `--tier`/`--dimensions`/`--exhaustive` if supplied). Parse the JSON plan:
-`{ base, head, range, tier, dimensions, dimensionLabels, agents, dimensionAgents, models, runVerify, verify, escalation, exhaustive, discovery, sharded, shards, scan, learning, notify, trackers, mandatoryChecks, gate, intentSources, projectRules, signals, diffSummary }`.
-Print: `Tier: <tier>${exhaustive ? " (exhaustive)" : ""} | agents: <agents> | <diffSummary>`.
+## 4. Hand the fan-out to the Workflow
+Call the Workflow tool — it owns intent, per-aspect review (`dimensions × shards`), per-finding verification (every finding, separate agent), resolve, synthesize, and rendering:
 
-**`plan.discovery`** drives the Tier C ultrareview-parity passes — `{ exhaustive, maxRounds, completenessCritic, taint, generativeVerify, loopUntilDry }`. They are all on together when `plan.exhaustive` (auto at `critical`, or `--exhaustive`) and all off otherwise. Each step below that costs extra tokens is explicitly gated on the matching `plan.discovery.*` flag; when it is false, run the plain (cheap) path.
-
-If `tier == "trivial"`: do one quick correctness/comment pass inline (no subagents), then jump to **step 8**. This is the over-review guard.
-
-## 3. Gather context + memory
-- Capture the diff: `git diff <base>..HEAD` (or per shard later).
-- Run `command node "$LIB/gather.mjs" --base <base>` → context bundle: `{ pr, existingComments, tickets, commits, rules, ticketKeys, trackerStatus, summary, notes }` (PR body, **existing PR/inline comments**, project rules, and the **issue keys** found in the PR/commit text per tracker). Tools missing → it degrades and notes the skip.
-- **Fetch linked tickets via MCP — never via API tokens.** For each tracker in `trackerStatus` that is `enabled`:
-  - **ClickUp** → if a ClickUp MCP server is connected (e.g. `clickup_get_task` / `clickup_search`), fetch each key in `ticketKeys.clickup` and append `{ tracker:'clickup', key, title, description, status }` to `bundle.tickets`. **Jira** → use the Atlassian MCP the same way for `ticketKeys.jira`.
-  - If the tracker is **enabled but its MCP server is not available**, do NOT fail: **ask the user once to connect/enable that MCP server**, then skip fetching for this run.
-  - If the tracker is **disabled** in config, skip silently.
-  - Record the outcome per tracker as `trackerUsage` (carry it to step 9): `{ clickup: { status: "used"|"skipped-no-mcp"|"no-keys"|"off", detail }, jira: {...} }`. The report must state whether each tracker was used.
-- If `learning.enabled`: `command node "$LIB/memory.mjs" load <learning.store>` → prior learnings (recurring, accepted false-positives, open questions).
-- `--incremental`: if `.adverserial-code-review/last-review.json` exists, load it; later mark findings new vs carried-over so you only re-spend effort on new code.
-
-## 4. Dependency / supply-chain scan
-If `scan.deps`: run `command node "$LIB/scan.mjs"` → `{ findings, notes }`. Seed the D15 findings; add each `note` to the report's skipped/coverage list.
-
-## 5. Intent (skip for trivial)
-Build an isolated packet (context bundle + diff summary + rules).
-- First dispatch **intent-harvester** → `summary, statedIntent, derivedIntent, acceptanceCriteria, expectedTests, outOfScope, mismatches`.
-- Then, concurrently (both consume the harvester's criteria): **intent-grouper** → `groups` (primary vs **extra** intents) + `extraIntents`, noting any group with `scrutinize: true`; and for `standard`+ tiers **business-logic-analyzer** → `model, assumptions, openQuestions, businessRisks`. Carry its `openQuestions` straight to `needsHuman` — never assume on a material ambiguity.
-
-## 6. Review fan-out
-Build an isolated reviewer packet: `{ summary + acceptanceCriteria + mismatches + relevant intent groups, project rules, the diff }`. Do NOT include this chat's history.
-
-- Always dispatch **correctness-reviewer** (D1/D2/D12 + security & test screen).
-- For each agent in `plan.agents`, dispatch it for its dimension(s) using `dimensionAgents`, **with the model in `plan.models[dimension]`** (so e.g. D6 runs on opus for a migration but sonnet otherwise). All bundled — they ship with the plugin. If the user has an even-more-specialized agent installed for a dimension, you may prefer it.
-- **Sharding:** if `sharded`, run each dimension agent **once per shard** (each shard is its own aspect; ≤3 concurrent is fine), passing only that shard's files. This is how large diffs scale — no nested agents, just more aspects.
-- **Extra-intent scrutiny (deterministic):** pipe the intent-grouper output to `command node "$LIB/route.mjs" scrutiny` → `{ targets:[{label,files,reason}] }`. For each target, dispatch correctness-reviewer (or the matching specialist) at just those files — its own aspect.
-- **Mandatory checks (deterministic):** `echo '{"mandatoryChecks":[...]}' | command node "$LIB/route.mjs" checks` → `{ checks:[{check,dimension}] }`. Ensure each mapped dimension's agent runs (add it if the tier didn't plan it), and apply every check as a forced check regardless of tier.
-- Run independent reviewers concurrently. Each returns `{ strengths, findings }`. Collect all.
-
-**Loop-until-dry (Tier C — only if `plan.discovery.loopUntilDry`):** a single sweep misses the tail. Repeat the fan-out above for up to `plan.discovery.maxRounds` rounds. After each round, dedup new findings against everything seen so far by **`file:line:title`** (use the line — `memory.findingKey` is deliberately line-insensitive `file::title` for cross-run matching, so reusing it here would collapse two distinct same-title findings at different lines and falsely register a dry round); **stop as soon as a round adds nothing new** (a dry round — which can also happen because the spawn-ledger cap is reached for every remaining aspect). Every re-dispatch still goes through the spawn ledger below, so the per-aspect cap holds across rounds. Without the flag (the default for non-exhaustive reviews), run the fan-out exactly once — do NOT loop.
-
-**Spawn-on-doubt (bounded + accounted):** if a reviewer marks findings `uncertain: true`, or you are genuinely unsure about one specific aspect, you MAY fan extra reviewers **at that one aspect only**. Keep one ledger keyed by aspect (e.g. `review:D7:shardA`, `doubt:concurrency`) and gate **every** extra dispatch through `echo '{"ledger":<current>,"key":"<aspect>","max":<escalation.maxSubagentsPerAspect>}' | command node "$LIB/route.mjs" spawn` — it returns `ok:false`/`capped` once the aspect hits the cap (3). Thread the returned `ledger` forward through the whole review (reviewers + verifiers share it). Do not blanket-re-review.
-
-## 7. Bounded adversarial verification (code-enforced)
-**Run this step only when `plan.runVerify` is true (high/critical tiers).** Lower tiers ship reviewer findings at the ≥80 confidence gate without a refutation pass — that is the deliberate cost trade-off, so don't fabricate a verify pass for them.
-
-Do NOT eyeball this — let the deterministic policy pick the verify set:
-```bash
-echo '{"findings":[...all collected findings...],"config":<the .adverserial-code-review config>,"riskPaths":<signals.riskPaths>}' \
-  | command node "$LIB/verify.mjs" select
 ```
-It returns `{ select, maxVerifierPasses, maxSubagentsPerAspect }` — only the unsure findings (confidence < `reverify_below`, `uncertain:true`, an unscored finding, or high-severity on a risk path). High-confidence findings off risk paths are not in the set and are kept as-is. **Each selected finding carries flat `lens` + `focus` fields** (security/concurrency/data/resources/perf/error/api/types/observability, else correctness) and, for security findings, a flat `agent` field — pass them to the verifier so the second look attacks from a dimension-appropriate angle, not as another identical refuter.
-
-For each finding in `select`:
-- **Gate every dispatch through the spawn ledger** so the per-aspect cap is decided in code, not eyeballed: `echo '{"ledger":<current>,"key":"verify:<file>:<line>","max":<maxSubagentsPerAspect>}' | command node "$LIB/route.mjs" spawn` → if it returns `ok:false`/`capped`, stop spawning for that finding; thread the returned `ledger` into the next call.
-- Dispatch the verifier named by the finding's flat **`agent` field when it is present AND `plan.discovery.taint` is set (the Tier C data-flow pass — e.g. `taint-verifier` for D3 security findings); otherwise dispatch `finding-verifier`** — with that finding's `lens`/`focus` (adversarial — it tries to REFUTE along the lens). On this **first** verification pass, if `plan.discovery.generativeVerify`, set `generative: true` in the verifier packet so it may surface up to 2 adjacent findings. Take at most `maxVerifierPasses` (≤2) looks and never more than `maxSubagentsPerAspect` (3) agents on that finding. Stop early once two looks agree; for a finding that entered because it was *low-confidence*, take two looks before confirming (a single "real" is not enough).
-- Attach the collected verdicts to each finding as `verdicts: [{ verdict, lens }]`, then resolve deterministically:
-```bash
-echo '{"findings":[{...finding, "verdicts":[...]}, ...],"config":<config>}' | command node "$LIB/verify.mjs" resolve
+Workflow({
+  scriptPath: "$LIB/review-workflow.mjs",
+  args: { lib: "<absolute $LIB>", plan, bundle, diff, shards: plan.shards, routing, flags: { comment, gate, incremental, exhaustive }, startedAt: STARTED, prNumber, worktrees }
+})
 ```
-It returns `{ report, dropped, needsHuman, summary }`: majority `real` → kept; majority `refuted` → dropped; tie / still-uncertain after the cap → **needs-human** (surfaced, never silently dropped). **A critical/important finding is not dropped on a single refuter** when escalation is enabled and a 2nd look was affordable — resolve routes that lone refutation to needs-human (symmetric burden of proof, highest cost-of-miss); under a starved budget where a 2nd look is impossible, a lone refuter drops it. Use these three lists verbatim.
 
-**Generative verify (Tier C — only if `plan.discovery.generativeVerify`):** collect any `newFindings` the verifiers returned, dedup them against the existing set by `file:line:title`, and run **exactly one** more select→verify pass over just the new ones. On this second pass, dispatch every verifier with **`generative: false`** so it cannot emit further `newFindings` — that single override is what mechanically bounds this to one round (no recursion). It is still ledger-capped. Then re-run resolve over the combined set. Without the flag, ignore `newFindings`.
+- `lib` MUST be the **resolved absolute** `$LIB` path (the executor agents use it to run `verify.mjs`/`report.mjs`; `$CLAUDE_PLUGIN_ROOT` is empty inside executor shells). Resolve it first, e.g. `LIB="$(cd "$LIB" && pwd)"`.
+- `args` is delivered to the script as a **JSON string** — that is expected; the Workflow parses it (Task 4). Pass it as an object here regardless.
+- It returns `{ folderPath, gate, needsHuman, notes }`. If `scriptPath` does not resolve in this install, read the file and pass its contents via `script` instead.
 
-Only the unsure aspects are re-checked here — the review is never re-run wholesale, and no aspect is looked at more than 3 times total.
-
-## 8. Synthesize
-Dispatch **review-synthesizer** with acceptance criteria + mismatches + all findings + verification outcomes + business-logic open questions + memory notes. It returns `{ summary, strengths, criteria, findings, needsHuman, skipped }` (deduped, confidence ≥ 80, traceability per criterion).
-
-## 8b. Completeness sweep — false-negative guard (Tier C — only if `plan.discovery.completenessCritic`)
-This is the one pass aimed at what the review MISSED, not at refuting what it found. Skip it entirely unless `plan.discovery.completenessCritic`.
-- Dispatch **completeness-critic** with the synthesizer's coverage matrix + kept findings + the skipped-dimension list + `signals.riskPaths` + diff summary + project rules. It returns `{ gaps, assessment }` (≤6 bounded gaps, each with a `dispatch` target).
-- For each gap's `dispatch`: gate it through the spawn ledger (`key: "complete:<where>"`) exactly like step 6/7, then run the named agent at just those files. **This is bounded — do NOT loop the critic.** New findings join the pool → run step 7 (verify) on the new ones only → re-run step 8 (synthesize) so the report reflects them.
-- Add `assessment` to the report's coverage notes (pass it in `summary`/`skipped` context to step 9).
-
-## 9. Deliver
-- If `--comment`: dispatch **pr-comment-author** on the kept findings → comment-ready objects (`fixCode`, `example`, tone).
-- Render + gate. Build the payload from the pieces already computed: `findings` = the synthesizer's deduped kept list (== step 7's `report`), `needsHuman` = synthesizer needs-human + business-logic open questions, `context` = the gather bundle (`{pr, tickets, existingComments, trackerUsage}` from step 3, so the report cites the tickets and states whether each tracker was used), `verify.summary` = step 7's `resolve` summary. Also pass the **`plan`** object verbatim from step 2 plus an **`agentRuns`** map and **`commentMode`** so the report can show an accurate "Agents & coverage" section (who ran, who didn't, and why):
-  - `plan` — the whole step-2 plan JSON (the report reads `tier`, `dimensions`, `dimensionLabels`, `models`, `runVerify`, `discovery`, `sharded`, `shards` from it to derive which agents were in scope and why others were not).
-  - `agentRuns` — a map of `agentName → number of times you actually dispatched it` across the whole review, counting per-shard reviews, extra-intent/mandatory-check passes, verifier passes, and any spawn-on-doubt or completeness re-dispatches. This is what makes the run counts real rather than planned. If you did not track a given agent, omit it (the report falls back to the planned dispatch count).
-  - `commentMode` — `true` when `--comment` was passed (so `pr-comment-author` is shown as run).
-  - `startedAt` — the `STARTED` timestamp from step 1; `prNumber` — the PR number when there is one (from the gather bundle / `gh`), omit otherwise. The report prints both, with human-readable start + finish times.
-  - `worktrees` — the `worktrees` array from step 1b (each `{ name, path, baseRef, headRef }`); the report names the worktree(s) the review ran in. Pass `[]` (or omit) when no worktree was used.
-  - Use the criteria objects' real text as the requirement name (the report leads each traceability row with the requirement, with the `AC#` id as a tag), and include `covered`/`evidence` per criterion.
-  - **Do not pass `--out`/`--html`.** `report.mjs` writes into a per-run folder `.adverserial-code-review/review-{YYYY-MM-DD}/review-{counter}[-pr-{prNumber}]/` containing `review.md` + `review.html` — an outer folder per day, an inner folder per run (counter resets each day). (Pass `--base-dir` only to relocate the parent.)
-  - **Run `report.mjs` from the MAIN repo** (not from `WT`), so the report folder persists after the worktree is torn down.
-```bash
-echo '{"findings":[...],"criteria":[{"id":"AC1","text":"<requirement>","covered":true,"evidence":"<file:line>"}],"tier":"<tier>","gate":<gate>,"needsHuman":[...],"skipped":[...],"strengths":[...],"summary":"...","context":{"pr":...,"tickets":[...],"existingComments":[...],"trackerUsage":{"clickup":{"status":"used","detail":"2 ticket(s) via MCP"},"jira":{"status":"skipped-no-mcp"}}},"plan":<the step-2 plan JSON>,"agentRuns":{"correctness-reviewer":1,"vuln-reviewer":2,"finding-verifier":3},"commentMode":false,"startedAt":"<STARTED>","prNumber":<n or omit>,"worktrees":[{"name":"review-pr-7-feature-abc1234","path":".adverserial-code-review/worktrees/review-pr-7-feature-abc1234","baseRef":"origin/main","headRef":"origin/feature"}],"learningStore":"<learning.store>","range":"<range>"}' \
-  | command node "$LIB/report.mjs" [--gate]
-```
-  - Writes **`review.md` + `review.html`** into the per-run folder (each with the requirement-traceability matrix that names every requirement, the findings, the PR number + start/finish timestamps, and an **Agents & coverage** rundown of which agents ran — with run counts and model — and which did not and why), prints the folder path + a terminal summary + verdict (`APPROVE`/`WARN`/`BLOCK`), folds in memory, and records this run. Keep the two files concise and non-duplicative — explain in plain terms, briefly.
-  - `--gate`: the script's exit code is the gate (non-zero on BLOCK) — for hooks/CI.
-  - `--comment`: also `echo '{"findings":[enriched],"head":"<head>","prNumber":<n>,"existingComments":[...]}' | command node "$LIB/comments.mjs"` to post inline PR comments (deduped against existing). Requires `gh`.
-- **Worktree teardown:** if step 1b created a worktree and `worktree.keep` is not `true`, remove it: `command node "$LIB/worktree.mjs" remove --path "$WT"` (its name is already recorded in the report). If `keep:true`, leave it in place and tell the user the path.
-- **Incremental state:** write `.adverserial-code-review/last-review.json` with this run's finding keys + range for next-run dedup.
-- **Notify:** if `needsHuman` is non-empty and `notify.ask_on_unresolved`, present those open questions to the user in chat as a short numbered list and tell them their answers will be saved to project memory (`.adverserial-code-review/learnings.json`) so the same question is not re-asked. Do not block the report on the answer.
+## 5. Deliver
+- Relay `folderPath` + verdict + any `notes` to the user.
+- `--comment`: `echo '{"findings":[enriched],"head":"<head>","prNumber":<n>,"existingComments":[...]}' | node "$LIB/comments.mjs"` to post inline PR comments (requires `gh`).
+- Worktree teardown: if step 2 created one and `worktree.keep` is not `true`, `node "$LIB/worktree.mjs" remove --path "$WT"`.
+- Incremental state: write `.adverserial-code-review/last-review.json` with this run's finding keys + range.
+- Notify: if `needsHuman` is non-empty and `notify.ask_on_unresolved`, present those questions as a short numbered list; their answers are saved to `.adverserial-code-review/learnings.json`.
 
 ## Output discipline
-Strengths-first, cite `file:line` for every finding, no performative agreement, advisory only — never edit source.
+Strengths-first, cite `file:line`, advisory only — never edit source.
