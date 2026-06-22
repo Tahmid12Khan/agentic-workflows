@@ -40,12 +40,12 @@ test('payment change → critical tier, security+concurrency mandatory, verify o
   assert.equal(plan.models.D3, 'opus');
 });
 
-test('normal feature → standard tier, simplifier suggestions, no verify', () => {
+test('normal feature → standard tier, simplifier suggestions, verify on', () => {
   const f = cases.find(c => c.name === 'normal feature');
   const plan = planReview(computeSignals(f), DEFAULT_CFG);
   assert.equal(plan.tier, 'standard');
   assert.ok(plan.dimensions.includes('D16'));
-  assert.equal(plan.runVerify, false);
+  assert.equal(plan.runVerify, true);
 });
 
 test('risk_map config can force a tier floor', () => {
@@ -53,4 +53,13 @@ test('risk_map config can force a tier floor', () => {
   const cfg = { ...DEFAULT_CFG, risk_map: { critical: ['src/profile/**'] } };
   const plan = planReview(computeSignals(f), cfg);
   assert.equal(plan.tier, 'critical');
+});
+
+test('runVerify is on for every non-trivial tier', () => {
+  for (const tier of ['low', 'standard', 'high', 'critical']) {
+    const p = planReview({ riskPaths: [], languages: [], callsLlm: false }, {}, tier);
+    assert.equal(p.runVerify, true, `${tier} should verify`);
+  }
+  const trivial = planReview({ riskPaths: [], languages: [], callsLlm: false }, {}, 'trivial');
+  assert.equal(trivial.runVerify, false, 'trivial should not verify');
 });
