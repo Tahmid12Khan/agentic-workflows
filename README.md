@@ -234,9 +234,9 @@ Runs the unit suite (triage, render, shard, verify, memory, scan, comments, gath
 
 ## Roadmap
 
+- **Done (v0.3)** — Workflow-based `/review` (thin dispatcher; fan-out + verify-all in `lib/review-workflow.mjs`); **verify-all** (every finding on non-trivial tiers gets its own dedicated verification agent, not just uncertain ones); `lib/review-orchestration.mjs` (canonical, unit-tested pure Workflow helpers); `report.mjs` API hardened (requires `plan+agentRuns`; dropped `--out`/`--html` flags).
 - **Done (v0.2)** — bounded adversarial verify (code-enforced via `verify.mjs select`/`resolve`), full 17-dimension catalog, HTML report, **git-worktree review of the remote's latest pushed code**, per-project memory, PR-comment ingestion, **MCP-based ClickUp/Jira ingestion (no API tokens)**, dependency CVE scan, large-diff sharding, intent grouping + deterministic extra-intent scrutiny & forced-check routing (`route.mjs`), aspect-budget ledger (≤3/aspect), business-logic open questions.
-- **Next** — pre-push hook + GitHub Action templates; richer incremental diffing; auto-resolve memory questions from chat answers; deeper big-org parity (mutation testing, consumer-codebase impact scan, perf-benchmark execution, cross-shard dependency analysis).
-- **Next** - Use context7 mcp or web search for up-to-date library docs
+- **Next** — pre-push hook + GitHub Action templates; richer incremental diffing; auto-resolve memory questions from chat answers; deeper big-org parity (mutation testing, consumer-codebase impact scan, perf-benchmark execution, cross-shard dependency analysis); use Context7 MCP or web search for up-to-date library docs.
 
 ## License
 
