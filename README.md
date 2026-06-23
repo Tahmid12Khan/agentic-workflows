@@ -9,7 +9,7 @@ A Claude Code **plugin** for advisory, **criticality-aware** code review. It und
 ## What it does
 
 - **Triages by risk** — deterministic, zero-cost tier selection (trivial → critical); cheap models classify, expensive models review only where the cost-of-miss is high.
-- **Reviews the latest pushed code** — runs in a throwaway **git worktree** checked out from the remote's latest base/head, so it never reviews a stale local checkout; the worktree name is recorded in the report (`--no-worktree` to review the local tree instead).
+- **Reviews the latest pushed code** — runs in a throwaway **git worktree** checked out from the remote's latest base/head, so it never reviews a stale local checkout; the worktree name is recorded in the report (`--no-worktree` to review the local tree instead). If the head is **behind its base**, it lists the missing commits and asks you to rebase/merge first (advisory — you can proceed) so the diff isn't computed against a stale base.
 - **Understands intent both ways** — builds acceptance criteria from the PR, **existing PR comments**, commits, and **ClickUp/Jira** tickets (fetched **via MCP — no API tokens**); derives what the code actually does; flags where the two diverge.
 - **Groups changes by intent** — separates the primary intent from **extra/unexplained changes** and scrutinizes the extras (scope-creep control).
 - **Reviews every dimension** — 17 dimensions (correctness, security, tests, concurrency, perf, DB/migrations, API-compat, types, deps/CVE, observability, a11y, …), each a dedicated bundled agent, dispatched only when the change warrants it.
@@ -134,7 +134,7 @@ preflight  gather    plan                harvest/    reviewers         separate 
 
 `/review` is a **thin dispatcher**: it runs the deterministic scripts (steps 1–3), then hands the fan-out to a Workflow (`lib/review-workflow.mjs`). The main agent never assembles report payloads by hand.
 
-1. **Preflight + worktree** — verify node/git (gh, scanners optional); then, unless `--no-worktree`, `worktree.mjs` fetches the PR's base + head from the remote and checks out a throwaway git worktree at the **latest pushed** head — the review reads code and computes the diff there, then the worktree is removed (its name is recorded in the report).
+1. **Preflight + worktree** — verify node/git (gh, scanners optional); then, unless `--no-worktree`, `worktree.mjs` fetches the PR's base + head from the remote and checks out a throwaway git worktree at the **latest pushed** head — the review reads code and computes the diff there, then the worktree is removed (its name is recorded in the report). If the head is behind its base, it flags the missing commits and asks you to rebase/merge before reviewing.
 2. **Context** — `gather.mjs` pulls PR body, **existing comments**, commits, and ClickUp/Jira **issue keys** (the tickets are then fetched **via MCP — no API tokens**); `memory.mjs` loads prior learnings; `scan.mjs` runs dependency CVE scans.
 3. **Triage** (`plan.mjs` + `triage.mjs`) — diff → signals → tier, dimensions, per-dim model, **shards**, and the verification/escalation budgets. `triage-classifier` (haiku) can raise the tier on judgment.
 4. **Workflow fan-out** (`lib/review-workflow.mjs`) — the Workflow owns the remainder:
@@ -234,6 +234,7 @@ Runs the unit suite (triage, render, shard, verify, memory, scan, comments, gath
 
 ## Roadmap
 
+- **Done (v0.3.1)** — **stale-base warning**: the worktree setup reports `behindBase` (commits the base has that the head hasn't integrated) and `/review` asks you to rebase/merge before reviewing, so the `base..head` diff isn't computed against a stale base (advisory — never hard-blocks).
 - **Done (v0.3)** — Workflow-based `/review` (thin dispatcher; fan-out + verify-all in `lib/review-workflow.mjs`); **verify-all** (every finding on non-trivial tiers gets its own dedicated verification agent, not just uncertain ones); `lib/review-orchestration.mjs` (canonical, unit-tested pure Workflow helpers); `report.mjs` API hardened (requires `plan+agentRuns`; dropped `--out`/`--html` flags).
 - **Done (v0.2)** — bounded adversarial verify (code-enforced via `verify.mjs select`/`resolve`), full 17-dimension catalog, HTML report, **git-worktree review of the remote's latest pushed code**, per-project memory, PR-comment ingestion, **MCP-based ClickUp/Jira ingestion (no API tokens)**, dependency CVE scan, large-diff sharding, intent grouping + deterministic extra-intent scrutiny & forced-check routing (`route.mjs`), aspect-budget ledger (≤3/aspect), business-logic open questions.
 - **Next** — pre-push hook + GitHub Action templates; richer incremental diffing; auto-resolve memory questions from chat answers; deeper big-org parity (mutation testing, consumer-codebase impact scan, perf-benchmark execution, cross-shard dependency analysis); use Context7 MCP or web search for up-to-date library docs.

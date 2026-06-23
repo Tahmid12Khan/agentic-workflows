@@ -102,7 +102,9 @@ off, the pipeline reviews a fresh checkout of the **remote's latest** base and h
 
 1. **Fetch** the PR's base + head from the remote (`git fetch --no-tags <remote> <base> <head>`).
 2. **Check out** a detached **git worktree** at `<remote>/<head>` under `<base_dir>` (default `.adverserial-code-review/worktrees/`), named `review-[pr-<n>-]<head>-<sha8>`.
-3. **Return** the path, the resolved `baseRef`/`headRef`, and the diff `range` (`baseRef..HEAD`).
+3. **Return** the path, the resolved `baseRef`/`headRef`, the diff `range` (`baseRef..HEAD`), and `behindBase` — the commits the base has that the head has **not** integrated.
+
+When `behindBase.count > 0` the head is behind its base: the two-dot `base..head` diff is then computed against a base the branch hasn't merged, so it can miss real conflicts and renders base's newer commits as phantom deletions. `/review` lists those commits and asks the user to rebase or merge the base in before re-running. It is **advisory** — the user can proceed anyway; the review never hard-blocks on this.
 
 The rest of the pipeline (triage, gather, the reviewers, the diff) runs **inside that worktree**,
 so it always sees the most recent pushed code. The **report is written from the main repo** so it
