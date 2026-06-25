@@ -7,7 +7,7 @@ reading a line of source.
 
 > **One-sentence summary:** it reads a diff, measures how dangerous the change is,
 > reviews only the dimensions that matter at a depth that matches the risk,
-> adversarially re-checks every finding with its own verifier on non-trivial tiers (bounded to 3 looks),
+> adversarially re-checks the unsure findings with their own verifier on non-trivial tiers (bounded to 3 looks),
 > and reports the result — **it never edits your code.**
 
 - New here? Start at [Mental model](#mental-model).
@@ -65,9 +65,9 @@ flowchart TD
   C["3 · TRIAGE<br/><i>plan.mjs + triage.mjs</i><br/>diff → tier, dimensions, models,<br/>shards, verify/escalation budgets"]
   D["4 · INTENT<br/><i>triage-classifier · intent-harvester<br/>· intent-grouper · business-logic-analyzer</i><br/>tier sanity-check, stated vs actual,<br/>primary vs extra, open questions"]
   E["5 · REVIEW<br/><i>correctness-reviewer + specialists</i><br/>one isolated pass per dimension × shard"]
-  F["6 · VERIFY<br/><i>finding-verifier / taint-verifier<br/>· completeness-critic (exhaustive)</i><br/>adversarially refute every finding (verify-all)"]
+  F["6 · VERIFY<br/><i>finding-verifier / taint-verifier<br/>· completeness-critic (exhaustive)</i><br/>adversarially refute the unsure findings"]
   G["7 · SYNTHESIZE<br/><i>review-synthesizer</i><br/>dedupe, traceability matrix,<br/>needs-human list, one verdict"]
-  H["8 · DELIVER<br/><i>report.mjs · comments.mjs · pr-comment-author</i><br/>review.md + review.html (per-run folder),<br/>gate exit code, inline comments, memory write"]
+  H["8 · DELIVER<br/><i>report.mjs · comments.mjs</i><br/>review.md + review.html (per-run folder),<br/>gate exit code, inline comments, memory write"]
 
   A --> B --> C
   C -->|"tier == trivial"| H
@@ -86,9 +86,9 @@ What each stage contributes:
 3. **Triage** — the brain. See [The triage brain](#the-triage-brain).
 4. **Intent** — the Workflow opens with `triage-classifier` (haiku), a judgment pass on the deterministic tier: it can flag a **higher** tier for the human (it can't safely re-plan mid-run) and **adds dimensions the rules missed**, which become real review aspects. Then it builds the acceptance-criteria model: what the change *says* it does (PR/comments/tickets) vs. what the code *actually* does, and where the two diverge. Splits the primary intent from **extra / unexplained** changes and flags the extras for scope-creep control. Material business-logic ambiguities become *questions for you*, not silent assumptions.
 5. **Review** — fans out reviewers inside the Workflow. The always-on `correctness-reviewer` plus one specialist per planned dimension, each on the model `triage` chose for that dimension, each on its own shard for large diffs. Every reviewer gets a **clean packet** (intent + criteria + diff) and never the chat history.
-6. **Verify (verify-all)** — the Workflow spawns a **separate verification agent for every finding** (not just uncertain ones) on tiers where `plan.runVerify` is true. Each verifier attacks from a dimension-appropriate lens; the ≤ 3 subagents/aspect cap is enforced in code. See [Bounded adversarial verification](#bounded-adversarial-verification). On **exhaustive** reviews (`plan.discovery.completenessCritic`, auto at `critical`) a `completeness-critic` then hunts for what the fan-out **missed** — an unrun dimension, an uncovered criterion, an untraced input→sink — and re-dispatches up to 6 targeted reviewers whose new findings (deduped against the existing set) re-enter Verify before synthesis.
+6. **Verify (the unsure findings)** — the Workflow spawns a **separate verification agent for each unsure finding** — low-confidence, flagged uncertain, or high-severity on a risk path (`selectForVerification`) — on tiers where `plan.runVerify` is true; confident, non-risk findings are trusted and ship at the ≥80 gate. Each verifier attacks from a dimension-appropriate lens; the ≤ 3 subagents/aspect cap is enforced in code. See [Bounded adversarial verification](#bounded-adversarial-verification). On **exhaustive** reviews (`plan.discovery.completenessCritic`, auto at `critical`) a `completeness-critic` then hunts for what the fan-out **missed** — an unrun dimension, an uncovered criterion, an untraced input→sink — and re-dispatches up to 6 targeted reviewers whose new findings (deduped against the existing set) all re-enter Verify before synthesis.
 7. **Synthesize** — `review-synthesizer` dedupes, builds the requirement→code traceability matrix, separates confident findings from open questions, and emits one verdict.
-8. **Deliver** — the Workflow calls `report.mjs` (via an executor agent) which writes `review.md` + `review.html` into a per-run folder `.adverserial-code-review/review-<YYYY-MM-DD>/review-<n>[-pr-<num>]/` (an outer folder per day, an inner folder per run; each report names the PR and its start/finish times). The report **always** includes an "Agents & coverage" section (Ran / Did not run). `report.mjs` accepts no `--out`/`--html` flags; the per-run folder is always written. Terminal summary + gate exit code (with `--gate`); `--comment` posts inline PR comments via `pr-comment-author` + `comments.mjs`; the run is recorded to memory; unresolved questions are surfaced to you.
+8. **Deliver** — the Workflow calls `report.mjs` (via a lightweight `haiku` executor agent — it only shells out to the script, which writes files) which writes `review.md` + `review.html` into a per-run folder `.adverserial-code-review/review-<YYYY-MM-DD>/review-<n>[-pr-<num>]/` (an outer folder per day, an inner folder per run; each report names the PR and its start/finish times). The report **always** includes an "Agents & coverage" section (Ran / Did not run). `report.mjs` accepts no `--out`/`--html` flags; the per-run folder is always written. Terminal summary + gate exit code (with `--gate`); `--comment` posts inline PR comments via `comments.mjs`; the run is recorded to memory; unresolved questions are surfaced to you.
 
 ---
 
@@ -220,8 +220,8 @@ reviews stay cheap — and the verification pass only kicks in from **High** up.
 ## Bounded adversarial verification
 
 The plugin doesn't trust its own first pass — but it doesn't re-run the whole review
-either. On every non-trivial tier (`plan.runVerify` true) the Workflow refutes **every
-finding** with its **own separate verifier agent** (verify-all), and looks at any one
+either. On every non-trivial tier (`plan.runVerify` true) the Workflow refutes the
+**unsure findings** — each with its **own separate verifier agent** — and looks at any one
 aspect **at most three times total** (1 review + ≤ 2 verifier passes), with **at most
 3 subagents** on it. Both caps are enforced in code (`verify.mjs` slices verdicts to the
 budget; the per-aspect spawn ledger in `lib/review-workflow.mjs` — `canSpawn`/`recordSpawn`,
@@ -229,10 +229,10 @@ canonically `lib/review-orchestration.mjs` — must clear before every dispatch)
 
 ### Which findings get a second look (`selectForVerification`)
 
-The live verify-all policy refutes every finding, so on non-trivial tiers this gate is
-moot. The pure `selectForVerification` helper (still exported + unit-tested) encodes the
-*priority* a budget-constrained run would follow — uncertain, low-confidence, or
-high-severity-on-a-risk-path findings first:
+`selectForVerification` is the live gate: a confident, non-risk finding is trusted and
+ships at the ≥80 gate without spending a verifier; the unsure ones — uncertain,
+low-confidence, or high-severity-on-a-risk-path — are the ones refuted. The pure helper is
+canonical + unit-tested in `lib/verify.mjs` and inlined into the Workflow:
 
 ```mermaid
 flowchart TD
@@ -332,7 +332,7 @@ cap (≤ 3) holds across rounds.
 
 ---
 
-## The agents (23 bundled)
+## The agents (22 bundled)
 
 All ship with the plugin — it's self-contained. Each reviewer is **isolated** (a clean
 packet: intent + criteria + diff, never the chat history), **changed-lines-only**, and
@@ -352,7 +352,6 @@ orchestrator uses `plan.models[dimension]`, so a dimension can run hotter than i
 | `taint-verifier` | opus | Data-flow security verifier — traces source → sink for D3 findings. |
 | `completeness-critic` | opus | Tier C false-negative guard — hunts for what the review missed. |
 | `review-synthesizer` | sonnet | Dedupe, traceability matrix, needs-human list, final verdict. |
-| `pr-comment-author` | sonnet | Turns findings into toned inline comments with a suggested-fix snippet. |
 
 ### Dimension specialists
 

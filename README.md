@@ -140,10 +140,10 @@ preflight  gather    plan                harvest/    reviewers         separate 
 4. **Workflow fan-out** (`lib/review-workflow.mjs`) — the Workflow owns the remainder:
    - **Intent** — `triage-classifier` (haiku) first sanity-checks the tier (raises it for the human when blast radius warrants, and **adds dimensions the rules missed** as real review aspects); then `intent-harvester` (stated vs derived + mismatches), `intent-grouper` (primary vs extra intents), `business-logic-analyzer` (assumptions + open questions).
    - **Review** — `correctness-reviewer` always; the planned specialist agents per dimension; one pass per shard for large diffs; extra-intent groups get focused scrutiny.
-   - **Verify (verify-all)** — on non-trivial tiers (`plan.runVerify` true), **every finding gets its own verification agent** — not just the uncertain ones. A separate `finding-verifier` (or `taint-verifier` for D3 security) adversarially tries to refute each finding. Cap: **≤ 3 looks and ≤ 3 subagents per aspect**; findings still-split → "needs human". On **exhaustive** reviews, a `completeness-critic` then hunts for what was **missed** (unrun dimension, uncovered criterion, untraced taint) and re-dispatches ≤ 6 targeted reviewers whose new findings re-enter Verify.
+   - **Verify (the unsure findings)** — on non-trivial tiers (`plan.runVerify` true), the **unsure** findings — low-confidence, flagged uncertain, or high-severity on a risk path (`selectForVerification`) — each get their own verification agent; confident, non-risk findings are trusted and ship at the ≥80 gate. A separate `finding-verifier` (or `taint-verifier` for D3 security) adversarially tries to refute each selected finding. Cap: **≤ 3 looks and ≤ 3 subagents per aspect**; findings still-split → "needs human". On **exhaustive** reviews, a `completeness-critic` then hunts for what was **missed** (unrun dimension, uncovered criterion, untraced taint) and re-dispatches ≤ 6 targeted reviewers whose new findings re-enter Verify (all of them, for max rigor).
    - **Synthesize** — `review-synthesizer` dedupes, builds the requirement→code matrix, separates findings from open questions, emits a verdict.
    - **Report** (`report.mjs`) — writes `review.md` + `review.html` into a per-run folder `.adverserial-code-review/review-<YYYY-MM-DD>/review-<n>[-pr-<num>]/` + terminal summary. The report **always** includes an "Agents & coverage" section listing which agents ran and which did not (and why). `report.mjs` takes no `--out`/`--html` flags; the per-run folder is always written.
-5. **Deliver** — main agent relays `folderPath` + verdict + `notes`; `--gate` → exit code; `--comment` → inline comments via `pr-comment-author` + `comments.mjs`; records this run to memory; surfaces open questions to you.
+5. **Deliver** — main agent relays `folderPath` + verdict + `notes`; `--gate` → exit code; `--comment` → inline comments via `comments.mjs`; records this run to memory; surfaces open questions to you.
 
 ### Tiers (the token-saving brain)
 
@@ -163,7 +163,7 @@ Runs on **high/critical tiers** (lower tiers ship at the ≥80 gate). The user-t
 
 ## Dimensions & agents
 
-23 bundled agents. The four orchestration agents (`triage-classifier`, `intent-harvester`, `correctness-reviewer`, `review-synthesizer`) plus `intent-grouper`, `business-logic-analyzer`, `finding-verifier`, `pr-comment-author`, the two Tier C exhaustive-pass agents (`completeness-critic`, `taint-verifier`), and one specialist per dimension:
+22 bundled agents. The four orchestration agents (`triage-classifier`, `intent-harvester`, `correctness-reviewer`, `review-synthesizer`) plus `intent-grouper`, `business-logic-analyzer`, `finding-verifier`, the two Tier C exhaustive-pass agents (`completeness-critic`, `taint-verifier`), and one specialist per dimension:
 
 | Dim | Agent | Model |
 |-----|-------|-------|
@@ -192,7 +192,7 @@ Created by `/review-init`; schema at `.adverserial-code-review/config.schema.jso
 
 ```
 commands/   /review, /review-init
-agents/     23 bundled agents
+agents/     22 bundled agents
 lib/
   preflight.mjs   env check
   plan.mjs        diff → review plan (tier, dims, shards, budgets)
