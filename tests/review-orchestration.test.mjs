@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { expandAspects, findingKey, newCaps, canSpawn, recordSpawn, buildReportPayload } from '../lib/review-orchestration.mjs';
+import { expandAspects, findingKey, newCaps, canSpawn, recordSpawn, buildReportPayload, pluginAgent, PLUGIN_NS } from '../lib/review-orchestration.mjs';
 
 test('expandAspects = dimensions × shards', () => {
   const aspects = expandAspects(
@@ -32,6 +32,17 @@ test('buildReportPayload throws without plan or agentRuns', () => {
   assert.throws(() => buildReportPayload({ plan: {} }), /agentRuns/);
 });
 
+test('pluginAgent namespaces bundled agents, passes built-ins through, is idempotent', () => {
+  assert.equal(pluginAgent('error-handling-reviewer'), `${PLUGIN_NS}:error-handling-reviewer`);
+  assert.equal(pluginAgent('finding-verifier'), `${PLUGIN_NS}:finding-verifier`);
+  // built-in harness agent must NOT be namespaced — it has no plugin entry
+  assert.equal(pluginAgent('general-purpose'), 'general-purpose');
+  // already-namespaced and empty inputs pass through untouched
+  assert.equal(pluginAgent(`${PLUGIN_NS}:vuln-reviewer`), `${PLUGIN_NS}:vuln-reviewer`);
+  assert.equal(pluginAgent(''), '');
+  assert.equal(pluginAgent(undefined), undefined);
+});
+
 import { readFileSync } from 'node:fs';
 test('review-workflow.mjs declares a valid meta with 5 phases', () => {
   const src = readFileSync(new URL('../lib/review-workflow.mjs', import.meta.url), 'utf8');
@@ -42,6 +53,15 @@ test('review-workflow.mjs declares a valid meta with 5 phases', () => {
   // inlined helpers must match the canonical signatures
   assert.match(src, /function expandAspects\(/);
   assert.match(src, /const findingKey =/);
+  // every plugin agent dispatch must be namespaced; only built-ins stay bare
+  assert.match(src, /const pluginAgent =/);
+  assert.doesNotMatch(src, /agentType: '(?!general-purpose')[a-z-]+'/,
+    'no bare plugin agentType literal may remain — wrap it in pluginAgent()');
+  // triage-classifier and completeness-critic must be actually dispatched (not just listed in render.mjs)
+  assert.match(src, /pluginAgent\('triage-classifier'\)/, 'triage-classifier must be dispatched');
+  assert.match(src, /pluginAgent\('completeness-critic'\)/, 'completeness-critic must be dispatched');
+  // completeness-critic gates on the exhaustive discovery flag
+  assert.match(src, /plan\.discovery\?\.completenessCritic/);
 });
 
 test('buildReportPayload assembles all fields', () => {

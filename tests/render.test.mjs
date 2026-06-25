@@ -65,11 +65,33 @@ test('agentCoverage classifies ran vs not-run from the plan, total is the full r
   assert.match(vuln.reason, /security/);
 });
 
-test('agentCoverage uses observed run counts when provided, else the planned count', () => {
+test('observed dispatch counts are authoritative: RAN follows the count, not the planned flag', () => {
+  // when a real counts map is present, it is COMPLETE — an agent absent from it ran 0 times
   const cov = agentCoverage(standardPlan, { 'correctness-reviewer': 5 });
   const corr = cov.ran.find((a) => a.name === 'correctness-reviewer');
-  assert.equal(corr.runs, 5); // observed override wins
+  assert.equal(corr.runs, 5); // observed count wins
   assert.ok(cov.dispatches >= 5);
+  // business-logic-analyzer is planned at standard tier but absent from the observed map → did NOT run
+  assert.ok(cov.notRun.some((a) => a.name === 'business-logic-analyzer'));
+  assert.ok(!cov.ran.some((a) => a.name === 'business-logic-analyzer'));
+});
+
+test('a planned agent that dispatched 0 times is NOT listed as "ran 0×"', () => {
+  // regression: the RAN section used the planned `ran` flag while the ×N count used the
+  // observed map, so a planned-but-zero-dispatch agent appeared under RAN showing 0×.
+  const cov = agentCoverage(standardPlan, { 'correctness-reviewer': 1, 'intent-harvester': 0 });
+  // no row in the RAN section may show a zero count
+  assert.ok(cov.ran.every((a) => a.runs > 0), 'every RAN agent must have a positive dispatch count');
+  // the zero-dispatch agent is moved to notRun with an honest reason
+  const ih = cov.notRun.find((a) => a.name === 'intent-harvester');
+  assert.ok(ih, 'intent-harvester (observed 0) belongs under did-not-run');
+  assert.match(ih.reason, /no dispatch/);
+});
+
+test('with no observed counts (trivial inline path), the planned expectation is used', () => {
+  const cov = agentCoverage(standardPlan); // empty map → fall back to plan
+  assert.ok(cov.ran.some((a) => a.name === 'correctness-reviewer'));
+  assert.ok(cov.ran.some((a) => a.name === 'business-logic-analyzer'));
 });
 
 test('agentCoverage flags a trivial change as inline (no subagents)', () => {
