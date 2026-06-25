@@ -20,12 +20,12 @@ Every module is one pipeline step, named for its verb (`scan`, `gather`, `triage
 - Config is read optionally from `.adverserial-code-review/config.json` inside a try/catch defaulting to `{}`; every key has an inline `?? default`.
 - Exit codes: `2` = usage/argument error, `1` = hard failure / gate BLOCK, `0` = success.
 - Comments explain the **why** (the policy, the cost-of-miss tradeoff), not the mechanics.
-- **Workflow-DSL exception**: `lib/review-workflow.mjs` is NOT a pipeline-step module — it has no shebang/`main` and uses the harness Workflow globals (`agent`/`pipeline`/`phase`/`args`). It cannot be `import`ed or run with `node`; it inlines the pure helpers whose canonical, tested copies live in `lib/review-orchestration.mjs`. Keep the two in sync.
+- **Workflow-DSL exception**: `lib/review-workflow.mjs` is NOT a pipeline-step module — it has no shebang/`main` and uses the harness Workflow globals (`agent`/`pipeline`/`phase`/`args`). It cannot be `import`ed or run with `node`; it inlines the pure helpers whose canonical, tested copies live in `lib/review-orchestration.mjs` (orchestration helpers) and `lib/verify.mjs` (the verification policy — `verifyPolicy`/`selectForVerification`/`resolveVerification`/`partition`, run inline instead of via an executor agent). Keep the inlined copies in sync with their canonical sources.
 
 ## Where things live
 
 - **Review dimensions** (`Dn` ids) are defined in `lib/triage.mjs` — `DIMENSION_AGENTS`, `DIMENSION_LABELS`, `TIER_DIMENSIONS`, `OPUS_DIMS`, and the content gates in `planReview()`. Not in `config.schema.json` (it has no dimension enum) and not in `render.mjs` (it imports the maps). To add one, use `/add-reviewer-dimension`.
-- **Bundled agents** live in `agents/`. The dimension reviewers (`*-reviewer.md`) share one finding contract; the pipeline agents (`intent-*`, `triage-classifier`, `business-logic-analyzer`, `*-verifier`, `completeness-critic`, `review-synthesizer`, `pr-comment-author`) each use their own JSON shape by design.
+- **Bundled agents** live in `agents/`. The dimension reviewers (`*-reviewer.md`) share one finding contract; the pipeline agents (`intent-*`, `triage-classifier`, `business-logic-analyzer`, `*-verifier`, `completeness-critic`, `review-synthesizer`) each use their own JSON shape by design.
 - **Severity vocabulary is fixed**: `critical | important | minor | suggestion` (lowercase). Never introduce `high`/`med`/`low`/`info`. The full finding contract is enforced by the `dimension-agent-consistency` agent — run it if you touch a reviewer's output.
 - **Review orchestration** is a Workflow (`lib/review-workflow.mjs`), invoked by `commands/review.md`. The main agent only runs the deterministic scripts + the Workflow call; it never assembles the `report.mjs` payload by hand.
 

@@ -47,7 +47,7 @@ const standardPlan = {
 
 test('agentCoverage classifies ran vs not-run from the plan, total is the full roster', () => {
   const cov = agentCoverage(standardPlan);
-  assert.equal(cov.total, 23); // 14 dimension reviewers + 9 pipeline agents
+  assert.equal(cov.total, 22); // 14 dimension reviewers + 8 pipeline agents
   const ran = new Set(cov.ran.map((a) => a.name));
   const notRun = new Set(cov.notRun.map((a) => a.name));
   // standard tier: correctness + the gated specialists ran
@@ -58,8 +58,6 @@ test('agentCoverage classifies ran vs not-run from the plan, total is the full r
   assert.ok(notRun.has('concurrency-reviewer'));
   // verify only at high/critical
   assert.ok(notRun.has('finding-verifier'));
-  // no --comment
-  assert.ok(notRun.has('pr-comment-author'));
   // a not-run reason explains WHY
   const vuln = cov.notRun.find((a) => a.name === 'vuln-reviewer');
   assert.match(vuln.reason, /security/);
@@ -105,7 +103,7 @@ test('reports render an Agents & coverage section in markdown and HTML', () => {
   const coverage = agentCoverage(standardPlan);
   const md = renderReport({ findings, criteria, tier: 'standard', coverage });
   assert.match(md, /## Agents & coverage/);
-  assert.match(md, /of 23 bundled agents ran/);
+  assert.match(md, /of 22 bundled agents ran/);
   assert.match(md, /vuln-reviewer/);
   const html = renderHtml({ findings, criteria, tier: 'standard', coverage });
   assert.match(html, /Agents &amp; coverage/);

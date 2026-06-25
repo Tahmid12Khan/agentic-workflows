@@ -62,6 +62,18 @@ test('review-workflow.mjs declares a valid meta with 5 phases', () => {
   assert.match(src, /pluginAgent\('completeness-critic'\)/, 'completeness-critic must be dispatched');
   // completeness-critic gates on the exhaustive discovery flag
   assert.match(src, /plan\.discovery\?\.completenessCritic/);
+  // resolve is inlined (pure), not dispatched as a general-purpose executor agent
+  assert.doesNotMatch(src, /label: 'resolve'/, 'resolve must be inlined, not dispatched');
+  assert.match(src, /function resolveVerification\(/, 'resolveVerification must be inlined');
+  assert.match(src, /function partition\(/, 'partition must be inlined');
+  // verification is bounded by selectForVerification (verify the unsure, not every finding)
+  assert.match(src, /selectForVerification\(rev\.findings/, 'verify must gate through selectForVerification');
+  // policy is wrapped so maxVerifierPasses is derived (raw plan.verify would break the cap)
+  assert.match(src, /verifyPolicy\(\{ verify: plan\.verify \}\)/);
+  // the report executor runs on haiku (it only shells out to report.mjs)
+  assert.match(src, /label: 'report'[^}]*model: 'haiku'|model: 'haiku'[^}]*label: 'report'/, 'report executor must run on haiku');
+  // the dead pr-comment-author dispatch is gone (comments.mjs does the real posting)
+  assert.doesNotMatch(src, /pluginAgent\('pr-comment-author'\)/, 'pr-comment-author dispatch must be removed');
 });
 
 test('buildReportPayload assembles all fields', () => {
