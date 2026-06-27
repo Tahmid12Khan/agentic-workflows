@@ -44,12 +44,15 @@ test('pluginAgent namespaces bundled agents, passes built-ins through, is idempo
 });
 
 import { readFileSync } from 'node:fs';
-test('review-workflow.mjs declares a valid meta with 5 phases', () => {
+test('review-workflow.mjs declares a valid meta with 4 phases', () => {
   const src = readFileSync(new URL('../lib/review-workflow.mjs', import.meta.url), 'utf8');
   assert.match(src, /export const meta = \{/);
-  for (const p of ['Intent', 'Review', 'Verify', 'Synthesize', 'Report']) {
+  for (const p of ['Intent', 'Review', 'Verify', 'Synthesize']) {
     assert.ok(src.includes(`title: '${p}'`), `meta must list phase ${p}`);
   }
+  // the report is rendered by the COMMAND (node report.mjs), not a workflow phase/agent
+  assert.ok(!src.includes("title: 'Report'"), 'Report phase must be gone — report.mjs is run by the command');
+  assert.doesNotMatch(src, /label: 'report'/, 'report executor agent must be removed — the workflow returns the payload');
   // inlined helpers must match the canonical signatures
   assert.match(src, /function expandAspects\(/);
   assert.match(src, /const findingKey =/);
@@ -60,6 +63,8 @@ test('review-workflow.mjs declares a valid meta with 5 phases', () => {
   // triage-classifier and completeness-critic must be actually dispatched (not just listed in render.mjs)
   assert.match(src, /pluginAgent\('triage-classifier'\)/, 'triage-classifier must be dispatched');
   assert.match(src, /pluginAgent\('completeness-critic'\)/, 'completeness-critic must be dispatched');
+  // triage-classifier is skipped for the trivial tier only (rank 5)
+  assert.match(src, /plan\.tier !== 'trivial'/, 'triage-classifier must be guarded for the trivial tier');
   // completeness-critic gates on the exhaustive discovery flag
   assert.match(src, /plan\.discovery\?\.completenessCritic/);
   // resolve is inlined (pure), not dispatched as a general-purpose executor agent
@@ -70,10 +75,25 @@ test('review-workflow.mjs declares a valid meta with 5 phases', () => {
   assert.match(src, /selectForVerification\(rev\.findings/, 'verify must gate through selectForVerification');
   // policy is wrapped so maxVerifierPasses is derived (raw plan.verify would break the cap)
   assert.match(src, /verifyPolicy\(\{ verify: plan\.verify \}\)/);
-  // the report executor runs on haiku (it only shells out to report.mjs)
-  assert.match(src, /label: 'report'[^}]*model: 'haiku'|model: 'haiku'[^}]*label: 'report'/, 'report executor must run on haiku');
+  // diff-trim (rank 1) is inlined + canonical in lib/trim-diff.mjs; D3 (security) stays on the full diff
+  assert.match(src, /function filterDiff\(/, 'filterDiff must be inlined (canonical: lib/trim-diff.mjs)');
+  assert.match(src, /diffForAspect/, 'dimension reviewers must use the shard-scoped diffForAspect');
+  assert.match(src, /a\.dim !== 'D3'/, 'D3 (security) must never get a trimmed diff');
   // the dead pr-comment-author dispatch is gone (comments.mjs does the real posting)
   assert.doesNotMatch(src, /pluginAgent\('pr-comment-author'\)/, 'pr-comment-author dispatch must be removed');
+});
+
+test('inlined filterDiff stays in sync with the canonical lib/trim-diff.mjs', async () => {
+  const src = readFileSync(new URL('../lib/review-workflow.mjs', import.meta.url), 'utf8');
+  const { filterDiff } = await import('../lib/trim-diff.mjs');
+  const diff = `diff --git a/x.mjs b/x.mjs\n--- a/x.mjs\n+++ b/x.mjs\n@@ -1 +1 @@\n-a\n+b\ndiff --git a/y.mjs b/y.mjs\n--- a/y.mjs\n+++ b/y.mjs\n@@ -1 +1 @@\n-c\n+d\n`;
+  // canonical behavior the inlined copy must reproduce: scope to one file, fall back on miss
+  assert.match(filterDiff(diff, ['x.mjs']), /x\.mjs/);
+  assert.doesNotMatch(filterDiff(diff, ['x.mjs']), /y\.mjs/);
+  assert.equal(filterDiff(diff, ['nope.mjs']), diff);
+  // the inlined copy must define the same gate + helpers (kept in sync by hand)
+  assert.match(src, /function sectionPath\(/);
+  assert.match(src, /const normPath =/);
 });
 
 test('buildReportPayload assembles all fields', () => {

@@ -126,9 +126,9 @@ prints the folder path, a one-line summary, and the verdict (`APPROVE` / `WARN` 
 ## How it works
 
 ```
-INTAKE → CONTEXT → TRIAGE → [Workflow: INTENT → REVIEW (fan-out) → VERIFY (all findings) → SYNTHESIZE → REPORT]
-preflight  gather    plan                harvest/    reviewers         separate agent           rollup       report.mjs
-+worktree  +memory                       group/biz   (per dim×shard)   per finding (≤3 caps)                 /gate/comments
+INTAKE → CONTEXT → TRIAGE → [Workflow: INTENT → REVIEW (fan-out) → VERIFY (unsure findings) → SYNTHESIZE] → REPORT
+preflight  gather    plan                harvest/    reviewers         separate agent             rollup       report.mjs
++worktree  +memory                       group/biz   (shard-scoped)    per unsure finding (≤3)                 /gate/comments
 +scan
 ```
 
@@ -137,13 +137,12 @@ preflight  gather    plan                harvest/    reviewers         separate 
 1. **Preflight + worktree** — verify node/git (gh, scanners optional); then, unless `--no-worktree`, `worktree.mjs` fetches the PR's base + head from the remote and checks out a throwaway git worktree at the **latest pushed** head — the review reads code and computes the diff there, then the worktree is removed (its name is recorded in the report). If the head is behind its base, it flags the missing commits and asks you to rebase/merge before reviewing.
 2. **Context** — `gather.mjs` pulls PR body, **existing comments**, commits, and ClickUp/Jira **issue keys** (the tickets are then fetched **via MCP — no API tokens**); `memory.mjs` loads prior learnings; `scan.mjs` runs dependency CVE scans.
 3. **Triage** (`plan.mjs` + `triage.mjs`) — diff → signals → tier, dimensions, per-dim model, **shards**, and the verification/escalation budgets. (The `triage-classifier` judgment pass runs at the start of the Workflow — see below.)
-4. **Workflow fan-out** (`lib/review-workflow.mjs`) — the Workflow owns the remainder:
-   - **Intent** — `triage-classifier` (haiku) first sanity-checks the tier (raises it for the human when blast radius warrants, and **adds dimensions the rules missed** as real review aspects); then `intent-harvester` (stated vs derived + mismatches), `intent-grouper` (primary vs extra intents), `business-logic-analyzer` (assumptions + open questions).
-   - **Review** — `correctness-reviewer` always; the planned specialist agents per dimension; one pass per shard for large diffs; extra-intent groups get focused scrutiny.
+4. **Workflow fan-out** (`lib/review-workflow.mjs`) — the Workflow owns intent → review → verify → synthesize, then returns the assembled report **payload** (it does not render — the sandbox can't write files):
+   - **Intent** — `triage-classifier` (haiku, skipped on the trivial tier) first sanity-checks the tier (raises it for the human when blast radius warrants, and **adds dimensions the rules missed** as real review aspects); then `intent-harvester` (stated vs derived + mismatches), `intent-grouper` (primary vs extra intents), `business-logic-analyzer` (assumptions + open questions).
+   - **Review** — `correctness-reviewer` always; the planned specialist agents per dimension; one pass per shard for large diffs. Each reviewer gets a **diff scoped to its shard files** (D3/security keeps the full diff so cross-file taint survives; reviewers can Read/Grep for sibling context); extra-intent groups get focused scrutiny.
    - **Verify (the unsure findings)** — on non-trivial tiers (`plan.runVerify` true), the **unsure** findings — low-confidence, flagged uncertain, or high-severity on a risk path (`selectForVerification`) — each get their own verification agent; confident, non-risk findings are trusted and ship at the ≥80 gate. A separate `finding-verifier` (or `taint-verifier` for D3 security) adversarially tries to refute each selected finding. Cap: **≤ 3 looks and ≤ 3 subagents per aspect**; findings still-split → "needs human". On **exhaustive** reviews, a `completeness-critic` then hunts for what was **missed** (unrun dimension, uncovered criterion, untraced taint) and re-dispatches ≤ 6 targeted reviewers whose new findings re-enter Verify (all of them, for max rigor).
    - **Synthesize** — `review-synthesizer` dedupes, builds the requirement→code matrix, separates findings from open questions, emits a verdict.
-   - **Report** (`report.mjs`) — writes `review.md` + `review.html` into a per-run folder `.adverserial-code-review/review-<YYYY-MM-DD>/review-<n>[-pr-<num>]/` + terminal summary. The report **always** includes an "Agents & coverage" section listing which agents ran and which did not (and why). `report.mjs` takes no `--out`/`--html` flags; the per-run folder is always written.
-5. **Deliver** — main agent relays `folderPath` + verdict + `notes`; `--gate` → exit code; `--comment` → inline comments via `comments.mjs`; records this run to memory; surfaces open questions to you.
+5. **Deliver** — the main agent runs `report.mjs` directly on the returned payload (no executor agent), writing `review.md` + `review.html` into a per-run folder `.adverserial-code-review/review-<YYYY-MM-DD>/review-<n>[-pr-<num>]/` + a terminal summary. The report **always** includes an "Agents & coverage" section listing which agents ran and which did not (and why); `report.mjs` takes no `--out`/`--html` flags. Then it relays `folderPath` + verdict + `notes`; `--gate` → exit code; `--comment` → inline comments via `comments.mjs`; records this run to memory; surfaces open questions to you.
 
 ### Tiers (the token-saving brain)
 
@@ -207,8 +206,9 @@ lib/
   scan.mjs        npm/pip dependency CVE scan
   render.mjs      findings → review.md + review.html + verdict (pure)
   report.mjs      render + gate + memory record (CLI)
-  review-workflow.mjs     Workflow DSL — fan-out (intent/review/verify/synthesize/report)
+  review-workflow.mjs     Workflow DSL — fan-out (intent/review/verify/synthesize); returns the report payload
   review-orchestration.mjs  pure helpers for the Workflow (canonical + unit-tested)
+  trim-diff.mjs   scope a diff to a reviewer's shard files (pure, canonical for the inlined copy)
   comments.mjs    inline PR comments via gh (CLI)
 .adverserial-code-review/    config.schema.json, config.json (dogfood)
 tests/      node:test unit tests
@@ -234,6 +234,7 @@ Runs the unit suite (triage, render, shard, verify, memory, scan, comments, gath
 
 ## Roadmap
 
+- **Done (v0.5.0)** — **token-savings pass** (no quality loss): dimension reviewers now get a **shard-scoped diff** (`lib/trim-diff.mjs`) instead of the whole diff — the single dominant input-token cost — while D3/security and every verifier/completeness-critic keep the full diff so cross-file taint survives. The **report executor agent is gone**: `report.mjs` is now an exported `generateReport()` the `/review` command runs directly, degrading soft failures (memory, file write) to notes instead of crashing. `triage-classifier` is **skipped on the trivial tier** and no longer gets `plan.models` in its prompt; the **completeness-critic receives a digested findings list** (keeps `verdict`+`dimension`, drops the bulky `evidence`/`fix`, which still reach the synthesizer).
 - **Done (v0.4.0)** — **plugin-namespaced agent dispatch**: the Workflow resolves every bundled agent through `pluginAgent()` (`adversarial-code-review:<name>`), fixing "agent type not found" on projects other than the plugin's own repo. **`triage-classifier` wired in** — a first-step judgment pass that flags a higher tier for the human and adds dimensions the rules missed as real review aspects. **`completeness-critic` wired in** — on exhaustive reviews, a false-negative guard that re-dispatches ≤6 targeted reviewers for missed dimensions/criteria/taint, whose new findings re-enter Verify. **Honest coverage report** — the "Agents & coverage" section now classifies RAN strictly by observed dispatch count, so a planned-but-never-dispatched agent no longer shows as "ran 0×".
 - **Done (v0.3.1)** — **stale-base warning**: the worktree setup reports `behindBase` (commits the base has that the head hasn't integrated) and `/review` asks you to rebase/merge before reviewing, so the `base..head` diff isn't computed against a stale base (advisory — never hard-blocks).
 - **Done (v0.3)** — Workflow-based `/review` (thin dispatcher; fan-out + verify-all in `lib/review-workflow.mjs`); **verify-all** (every finding on non-trivial tiers gets its own dedicated verification agent, not just uncertain ones); `lib/review-orchestration.mjs` (canonical, unit-tested pure Workflow helpers); `report.mjs` API hardened (requires `plan+agentRuns`; dropped `--out`/`--html` flags).

@@ -23,21 +23,23 @@ Resolve base/head and create a throwaway worktree exactly as `worktree.mjs` supp
 - Capture the diff text and `plan.shards`.
 
 ## 4. Hand the fan-out to the Workflow
-Call the Workflow tool — it owns intent, per-aspect review (`dimensions × shards`), per-finding verification (every finding, separate agent), resolve, synthesize, and rendering:
+Call the Workflow tool — it owns intent, per-aspect review (`dimensions × shards`), per-finding verification (the unsure findings), resolve, and synthesize. It assembles the report **payload** but no longer renders it (the sandbox can't write files; rendering moves to step 5):
 
 ```
 Workflow({
   scriptPath: "$LIB/review-workflow.mjs",
-  args: { lib: "<absolute $LIB>", plan, bundle, diff, shards: plan.shards, routing, flags: { comment, gate, incremental, exhaustive }, startedAt: STARTED, prNumber, worktrees }
+  args: { plan, bundle, diff, shards: plan.shards, routing, flags: { comment, gate, incremental, exhaustive }, startedAt: STARTED, prNumber, worktrees }
 })
 ```
 
-- `lib` MUST be the **resolved absolute** `$LIB` path (the executor agents use it to run `verify.mjs`/`report.mjs`; `$CLAUDE_PLUGIN_ROOT` is empty inside executor shells). Resolve it first, e.g. `LIB="$(cd "$LIB" && pwd)"`.
-- `args` is delivered to the script as a **JSON string** — that is expected; the Workflow parses it (Task 4). Pass it as an object here regardless.
-- It returns `{ folderPath, gate, needsHuman, notes }`. If `scriptPath` does not resolve in this install, read the file and pass its contents via `script` instead.
+- `args` is delivered to the script as a **JSON string** — that is expected; the Workflow parses it. Pass it as an object here regardless.
+- It returns `{ payload, needsHuman, notes }`. If `scriptPath` does not resolve in this install, read the file and pass its contents via `script` instead.
 
 ## 5. Deliver
-- Relay `folderPath` + verdict + any `notes` to the user.
+- **Render the report** (also the destination for the trivial path of step 3): write the `payload` JSON to a temp file and run `report.mjs` directly from the **main repo root** (not the worktree, so it survives teardown):
+  `node "$LIB/report.mjs"${gate ? ' --gate' : ''} < <payload.json>`.
+  Read the printed `→ <folderPath>` and `Verdict: <X>` lines from its stdout. `report.mjs` degrades soft failures (memory, file write) to stderr notes and only exits non-zero on a missing-plan/agentRuns contract violation or, with `--gate`, a BLOCK verdict.
+- Relay `folderPath` + verdict + any `notes` (workflow notes + report.mjs stderr) to the user.
 - `--comment`: `echo '{"findings":[enriched],"head":"<head>","prNumber":<n>,"existingComments":[...]}' | node "$LIB/comments.mjs"` to post inline PR comments (requires `gh`).
 - Worktree teardown: if step 2 created one and `worktree.keep` is not `true`, `node "$LIB/worktree.mjs" remove --path "$WT"`.
 - Incremental state: write `.adverserial-code-review/last-review.json` with this run's finding keys + range.
