@@ -1,6 +1,6 @@
 {
   "name": "adversarial-code-review",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Advisory, criticality-aware code review for Claude Code. Scales depth to risk, adversarially verifies the unsure findings, never edits code.",
   "type": "module",
   "private": true,
