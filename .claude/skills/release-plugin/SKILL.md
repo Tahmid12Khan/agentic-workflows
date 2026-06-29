@@ -1,6 +1,6 @@
 ---
 name: release-plugin
-description: Cut a release of the adversarial-code-review plugin — bump the version across every manifest that carries it, update the Roadmap/changelog, run tests, commit and tag. Use when shipping a new version.
+description: Cut a release of the adversarial-code-review plugin — bump the version across every manifest that carries it, update RELEASES.md (and ROADMAP.md when scope shifts), run tests, commit and tag. Use when shipping a new version.
 disable-model-invocation: true
 ---
 
@@ -23,7 +23,7 @@ Set the same value in all of:
 
 ## 2. Update the changelog surface
 
-There is no separate `CHANGELOG.md` — the **README "Roadmap"** section is the release log. Move the shipped items from "Next" into a `Done (v<new>)` group, and update any "v<old> adds…" prose in the README Configuration section to reflect what this release adds.
+The release log is **`RELEASES.md`** (newest first); the forward-looking plan is **`ROADMAP.md`**. Add a `## v<new>` section at the top of `RELEASES.md` describing what shipped; if the release delivered anything that was listed under `ROADMAP.md` "Next", remove those bullets from `ROADMAP.md`. Also update any "v<old> adds…" prose in the README Configuration section to reflect what this release adds. (`README.md` only links to these two files — do not re-add a Roadmap section there.)
 
 ## 3. Reconcile the docs
 
@@ -49,7 +49,7 @@ Push only when the user asks (`git push && git push --tags`). Don't push unpromp
 ## Checklist
 
 - [ ] Version identical in plugin.json, package.json, and both marketplace.json fields
-- [ ] README Roadmap updated (Done (v<new>) / Next)
+- [ ] `RELEASES.md` has a `## v<new>` section; `ROADMAP.md` "Next" pruned of anything shipped
 - [ ] `/sync-docs` run — README + ARCHITECTURE current
 - [ ] `npm test` green; no version drift
 - [ ] `chore(release): v<new>` commit + `v<new>` tag

@@ -42,7 +42,7 @@ If the agent's `model:` is `opus`, add `'Dxx'` to `OPUS_DIMS` (line ~24) so `pla
 
 ## 6. Update the docs (run `/sync-docs` or do manually)
 
-- `README.md`: add the `| Dxx <label> | <name>-reviewer | <model> |` row to the **Dimensions & agents** table; bump every dimension-count and agent-count claim (grep both docs for the old number) in the intro, "What it does", "Layout", and Roadmap.
+- `README.md`: add the `| Dxx <label> | <name>-reviewer | <model> |` row to the **Dimensions & agents** table; bump every dimension-count and agent-count claim (grep both docs for the old number) in the intro, "What it does", "Layout", and `RELEASES.md`.
 - `docs/ARCHITECTURE.md`: add the row to **The agents (23 bundled)** dimension table (and the heading agent count); update **Step 3 — dimensions, then models** (the `TIER_DIMENSIONS` table and the content-gates list); if you added a verify lens, update **Bounded adversarial verification**.
 
 ## 7. Add a test and verify

@@ -44,5 +44,5 @@ The version is duplicated across the plugin manifests and they must agree (the `
 ## Project skills
 
 - `/add-reviewer-dimension` — scaffold a new dimension end to end (agent file + `triage.mjs` wiring + docs).
-- `/release-plugin` — bump the version across every manifest, update the Roadmap, test, commit, tag.
+- `/release-plugin` — bump the version across every manifest, update `RELEASES.md` (+ `ROADMAP.md`), test, commit, tag.
 - `/sync-docs` — reconcile `README.md` + `docs/ARCHITECTURE.md` with the current code.
