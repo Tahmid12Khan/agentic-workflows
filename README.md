@@ -9,7 +9,7 @@ A Claude Code **plugin** for advisory, **criticality-aware** code review. It und
 ## What it does
 
 - **Triages by risk** — deterministic, zero-cost tier selection (trivial → critical); cheap models classify, expensive models review only where the cost-of-miss is high.
-- **Reviews the latest pushed code** — runs in a throwaway **git worktree** checked out from the remote's latest base/head, so it never reviews a stale local checkout; the worktree name is recorded in the report (`--no-worktree` to review the local tree instead). If the head is **behind its base**, it lists the missing commits and asks you to rebase/merge first (advisory — you can proceed) so the diff isn't computed against a stale base.
+- **Reviews the latest pushed code** — fetches the remote's latest base/head and **detaches HEAD onto the head** for the review (restoring your branch afterward), so neither the diff nor the reviewers' own `Read`/`Grep` ever see a stale local checkout; the head/base reviewed is recorded in the report (`--no-checkout` to review the local tree in place; a dirty tree stops the run and asks you to stash/commit yourself). If the head is **behind its base**, it lists the missing commits and asks you to rebase/merge first (advisory — you can proceed) so the diff isn't computed against a stale base.
 - **Understands intent both ways** — builds acceptance criteria from the PR, **existing PR comments**, commits, and **ClickUp/Jira** tickets (fetched **via MCP — no API tokens**); derives what the code actually does; flags where the two diverge.
 - **Groups changes by intent** — separates the primary intent from **extra/unexplained changes** and scrutinizes the extras (scope-creep control).
 - **Reviews every dimension** — 17 dimensions (correctness, security, tests, concurrency, perf, DB/migrations, API-compat, types, deps/CVE, observability, a11y, …), each a dedicated bundled agent, dispatched only when the change warrants it.
@@ -26,7 +26,7 @@ A Claude Code **plugin** for advisory, **criticality-aware** code review. It und
 |------|-----------|----------|
 | **Node.js ≥ 18** (20+ recommended) | yes | the pure planning/render/verify scripts (zero npm deps) |
 | **git** | yes | computing the diff |
-| **a git remote** (e.g. `origin`) | optional | worktree review of the remote's latest base/head; without one it reviews the local checkout (`--no-worktree`) |
+| **a git remote** (e.g. `origin`) | optional | review of the remote's latest base/head (HEAD detached onto it, then restored); without one it reviews the local checkout (`--no-checkout`) |
 | **gh** (GitHub CLI) | optional | PR body + existing comments, and `--comment` (inline PR comments) |
 | **ClickUp / Atlassian MCP** | optional | pull linked ticket context — **via MCP, no API tokens** |
 | **npm / pip-audit** | optional | dependency/CVE scan (D15) |
@@ -80,7 +80,7 @@ everything from the interactive `/plugin` menu):
 | `--dimensions D2,D3` | Restrict to specific dimensions. |
 | `--incremental` | Only re-spend effort on code new since the last review. |
 | `--exhaustive` | Force the Tier C ultrareview-parity passes (completeness critic, taint, generative verify, loop-until-dry) at any tier. Costs more tokens; auto-on at `critical`. |
-| `--no-worktree` | Review the local working tree instead of a worktree of the remote's latest base/head (use for **uncommitted** local changes). |
+| `--no-checkout` | Review the local working tree in place instead of detaching onto the remote's latest base/head (use for **uncommitted** local changes). |
 
 ## The review output
 
@@ -128,13 +128,13 @@ prints the folder path, a one-line summary, and the verdict (`APPROVE` / `WARN` 
 ```
 INTAKE → CONTEXT → TRIAGE → [Workflow: INTENT → REVIEW (fan-out) → VERIFY (unsure findings) → SYNTHESIZE] → REPORT
 preflight  gather    plan                harvest/    reviewers         separate agent             rollup       report.mjs
-+worktree  +memory                       group/biz   (shard-scoped)    per unsure finding (≤3)                 /gate/comments
++checkout  +memory                       group/biz   (shard-scoped)    per unsure finding (≤3)                 /gate/comments
 +scan
 ```
 
 `/review` is a **thin dispatcher**: it runs the deterministic scripts (steps 1–3), then hands the fan-out to a Workflow (`lib/review-workflow.mjs`). The main agent never assembles report payloads by hand.
 
-1. **Preflight + worktree** — verify node/git (gh, scanners optional); then, unless `--no-worktree`, `worktree.mjs` fetches the PR's base + head from the remote and checks out a throwaway git worktree at the **latest pushed** head — the review reads code and computes the diff there, then the worktree is removed (its name is recorded in the report). If the head is behind its base, it flags the missing commits and asks you to rebase/merge before reviewing.
+1. **Preflight + checkout** — verify node/git (gh, scanners optional); then, unless `--no-checkout`, `checkout.mjs` fetches the PR's base + head from the remote and **detaches HEAD onto the latest pushed head** — the review reads code and computes the diff there (so the reviewers' own `Read`/`Grep` see the real target), and your original branch is restored afterward (the head/base reviewed is recorded in the report). If the working tree is dirty git would overwrite, the run stops and asks you to stash/commit yourself. If the head is behind its base, it flags the missing commits and asks you to rebase/merge before reviewing.
 2. **Context** — `gather.mjs` pulls PR body, **existing comments**, commits, and ClickUp/Jira **issue keys** (the tickets are then fetched **via MCP — no API tokens**); `memory.mjs` loads prior learnings; `scan.mjs` runs dependency CVE scans.
 3. **Triage** (`plan.mjs` + `triage.mjs`) — diff → signals → tier, dimensions, per-dim model, **shards**, and the verification/escalation budgets. (The `triage-classifier` judgment pass runs at the start of the Workflow — see below.)
 4. **Workflow fan-out** (`lib/review-workflow.mjs`) — the Workflow owns intent → review → verify → synthesize, then returns the assembled report **payload** (it does not render — the sandbox can't write files):
@@ -185,7 +185,7 @@ Each is isolated (clean packet: intent + criteria + diff, never the chat history
 
 ## Configuration — `.adverserial-code-review/config.json`
 
-Created by `/review-init`; schema at `.adverserial-code-review/config.schema.json`. Beyond `risk_map`, `mandatory_checks`, `project_rules`, `intent_sources`, and `gate`, v0.2 adds: `verify`, `escalation`, `large_diff`, `scan`, `learning`, `notify`, `worktree` (run the review in a throwaway git worktree checked out from the remote's latest base/head — so it reviews the most recent pushed code, not the local checkout; the worktree name is recorded in the report), and `trackers` (ClickUp/Jira — tickets fetched via MCP, **no API tokens**; if a tracker's MCP server isn't connected, `/review` asks you to enable it and the report states whether each tracker was used).
+Created by `/review-init`; schema at `.adverserial-code-review/config.schema.json`. Beyond `risk_map`, `mandatory_checks`, `project_rules`, `intent_sources`, and `gate`, v0.2 adds: `verify`, `escalation`, `large_diff`, `scan`, `learning`, `notify`, `checkout` (detach HEAD onto the remote's latest base/head for the review and restore it afterward — so it reviews the most recent pushed code, not the local checkout; the head/base reviewed is recorded in the report), and `trackers` (ClickUp/Jira — tickets fetched via MCP, **no API tokens**; if a tracker's MCP server isn't connected, `/review` asks you to enable it and the report states whether each tracker was used).
 
 ## Layout
 
@@ -202,7 +202,7 @@ lib/
   route.mjs       deterministic routing — extra-intent scrutiny, forced checks, aspect-budget ledger
   memory.mjs      per-project learnings store
   gather.mjs      PR / comments / trackers (keys) / rules → context bundle
-  worktree.mjs    latest-code git worktree setup/teardown (fetch remote base/head)
+  checkout.mjs    latest-code review: fetch remote base/head, detach HEAD onto head, restore after
   scan.mjs        npm/pip dependency CVE scan
   render.mjs      findings → review.md + review.html + verdict (pure)
   report.mjs      render + gate + memory record (CLI)
@@ -230,10 +230,11 @@ fixtures/   sample diffs + expected tiers
 npm test             # or: node --test
 ```
 
-Runs the unit suite (triage, render, shard, verify, memory, scan, comments, gather, route, worktree) **and** the CLI integration suite (`tests/cli.test.mjs` — spawns plan/verify/scan/report/memory/route/comments/preflight end-to-end). No build, no dependencies.
+Runs the unit suite (triage, render, shard, verify, memory, scan, comments, gather, route, checkout) **and** the CLI integration suite (`tests/cli.test.mjs` — spawns plan/verify/scan/report/memory/route/comments/preflight end-to-end). No build, no dependencies.
 
 ## Roadmap
 
+- **Done (v0.7.0)** — **review the latest pushed code by detaching HEAD, not a worktree** (`lib/checkout.mjs` replaces `worktree.mjs`): the old worktree was invisible to the reviewer subagents (their `Read`/`Grep` run in the main repo), so the pipeline now fetches the remote base/head and **detaches HEAD onto the head** — both the diff and the reviewers' own file reads see the real target — then **restores your original branch** afterward. A dirty working tree stops the run with a **stash-and-rerun** message (it never stashes for you). Config `worktree` → `checkout` (`{ enabled, remote }`); flag `--no-worktree` → `--no-checkout`. Also fixed the per-aspect progress labels showing `review:Dn:undefined` (shard field was read as `.id`, but shards are keyed `.label`).
 - **Done (v0.6.0)** — **token-savings pass** (no quality loss): dimension reviewers now get a **shard-scoped diff** (`lib/trim-diff.mjs`) instead of the whole diff — the single dominant input-token cost — while D3/security and every verifier/completeness-critic keep the full diff so cross-file taint survives. The **report executor agent is gone**: `report.mjs` is now an exported `generateReport()` the `/review` command runs directly, degrading soft failures (memory, file write) to notes instead of crashing. `triage-classifier` is **skipped on the trivial tier** and no longer gets `plan.models` in its prompt; the **completeness-critic receives a digested findings list** (keeps `verdict`+`dimension`, drops the bulky `evidence`/`fix`, which still reach the synthesizer).
 - **Done (v0.4.0)** — **plugin-namespaced agent dispatch**: the Workflow resolves every bundled agent through `pluginAgent()` (`adversarial-code-review:<name>`), fixing "agent type not found" on projects other than the plugin's own repo. **`triage-classifier` wired in** — a first-step judgment pass that flags a higher tier for the human and adds dimensions the rules missed as real review aspects. **`completeness-critic` wired in** — on exhaustive reviews, a false-negative guard that re-dispatches ≤6 targeted reviewers for missed dimensions/criteria/taint, whose new findings re-enter Verify. **Honest coverage report** — the "Agents & coverage" section now classifies RAN strictly by observed dispatch count, so a planned-but-never-dispatched agent no longer shows as "ran 0×".
 - **Done (v0.3.1)** — **stale-base warning**: the worktree setup reports `behindBase` (commits the base has that the head hasn't integrated) and `/review` asks you to rebase/merge before reviewing, so the `base..head` diff isn't computed against a stale base (advisory — never hard-blocks).

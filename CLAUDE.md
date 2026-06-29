@@ -4,10 +4,10 @@ Advisory, criticality-aware code review plugin for Claude Code. Reads a diff, sc
 
 ## Golden rules
 
-1. **Advisory, never edits source.** No `lib/` module may write to a reviewed file. The only writes allowed are review artifacts under `.adverserial-code-review/` (reports via `report.mjs`, the learnings store via `memory.mjs`) and detached git worktrees via `worktree.mjs`. Findings carry a `fix` suggestion — rendered as text, never applied. This invariant is stamped into user-facing output (`render.mjs` HTML footer, `comments.mjs` PR-comment footer); keep it true.
+1. **Advisory, never edits source.** No `lib/` module may author or persist a change to a reviewed file. The only writes allowed are review artifacts under `.adverserial-code-review/` (reports via `report.mjs`, the learnings store via `memory.mjs`). `checkout.mjs` may move git HEAD — it detaches onto the remote's latest pushed head for the review and **restores the original ref afterward**, refusing (never stashing) when the working tree is dirty — but it never commits or edits content. Findings carry a `fix` suggestion — rendered as text, never applied. This invariant is stamped into user-facing output (`render.mjs` HTML footer, `comments.mjs` PR-comment footer); keep it true.
 2. **Zero runtime dependencies.** Import `node:` builtins only. No npm packages, no flag-parsing libs, no test frameworks. `package.json` has no `dependencies`.
 3. **Degrade to a skip note — never crash mid-run.** Probe for optional tools (`have('npm')`, `has('gh')`) up front; when something is missing or fails, push a human-readable string onto a `notes`/`skipped`/`warn` collection and keep going. Hard failure (`process.exit(1)`) is reserved for genuinely required tools (git), via `preflight.mjs`.
-4. **Determinism.** No `Date`/random in any function that generates an identity (e.g. `worktreeName`). Stable sorts use an explicit tie-break key.
+4. **Determinism.** No `Date`/random in any function that generates an identity (e.g. `findingKey`). Stable sorts use an explicit tie-break key.
 
 ## Module convention (`lib/*.mjs`)
 

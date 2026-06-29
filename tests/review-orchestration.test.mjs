@@ -5,7 +5,7 @@ import { expandAspects, findingKey, newCaps, canSpawn, recordSpawn, buildReportP
 test('expandAspects = dimensions × shards', () => {
   const aspects = expandAspects(
     { D2: 'correctness-reviewer', D3: 'vuln-reviewer' },
-    [{ id: 'A', files: ['a.ts'] }, { id: 'B', files: ['b.ts'] }],
+    [{ label: 'A', files: ['a.ts'] }, { label: 'B', files: ['b.ts'] }],
   );
   assert.equal(aspects.length, 4);
   assert.deepEqual(aspects[0], { dim: 'D2', agent: 'correctness-reviewer', shardId: 'A', files: ['a.ts'] });
@@ -104,7 +104,7 @@ test('buildReportPayload assembles all fields', () => {
     criteria: [{ id: 'AC1', text: 'r', covered: true }],
     strengths: ['s'], summary: 'sum', needsHuman: ['q'], skipped: ['x'],
     context: { pr: null }, verifySummary: { kept: 1 },
-    startedAt: '2026-06-22T00:00:00Z', prNumber: 7, worktrees: [], commentMode: true,
+    startedAt: '2026-06-22T00:00:00Z', prNumber: 7, checkout: null, commentMode: true,
   });
   assert.equal(p.tier, 'high');
   assert.equal(p.plan.tier, 'high');

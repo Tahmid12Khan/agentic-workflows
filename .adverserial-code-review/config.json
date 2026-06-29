@@ -21,7 +21,7 @@
   "exhaustive": { "on_critical": true, "max_discovery_rounds": 2 },
   "large_diff": { "shard_threshold_loc": 600, "max_shards": 4 },
   "scan": { "deps": true, "tests": false, "lint": false },
-  "worktree": { "enabled": true, "remote": "origin", "base_dir": ".adverserial-code-review/worktrees", "keep": false },
+  "checkout": { "enabled": true, "remote": "origin" },
   "learning": { "enabled": true, "store": ".adverserial-code-review/learnings.json" },
   "notify": { "ask_on_unresolved": true },
   "trackers": {

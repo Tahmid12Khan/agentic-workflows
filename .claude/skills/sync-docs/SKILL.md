@@ -1,6 +1,6 @@
 ---
 name: sync-docs
-description: Keep README.md and docs/ARCHITECTURE.md in sync with the adversarial-code-review code. Use after changing behavior — a review dimension, a CLI flag, config keys, worktree or MCP-tracker behavior, or the version — to reconcile the docs in the same change.
+description: Keep README.md and docs/ARCHITECTURE.md in sync with the adversarial-code-review code. Use after changing behavior — a review dimension, a CLI flag, config keys, checkout or MCP-tracker behavior, or the version — to reconcile the docs in the same change.
 ---
 
 # Sync the docs
@@ -18,9 +18,9 @@ description: Keep README.md and docs/ARCHITECTURE.md in sync with the adversaria
 | When you change… | README sections | docs/ARCHITECTURE.md sections |
 |---|---|---|
 | A review dimension (`lib/triage.mjs` maps + a new `agents/*-reviewer.md`) | "Dimensions & agents" table; every dimension-count and agent-count claim (intro, "What it does", "Layout", Roadmap) | "The agents" dimension table + heading count; "Step 3 — dimensions, then models" (`TIER_DIMENSIONS` table + content-gates list); the Mental-model flowchart's dimension-reviewers node; "Bounded adversarial verification" lens table if a verify lens was added |
-| A `/review` CLI flag or command (`commands/review.md`) | "/review flags" table (Quickstart); any feature bullet citing the flag (`--no-worktree`, `--exhaustive`, `--gate`/`--comment`); "Layout" commands line; Install if a command was added/removed | "Deliver" stage + "Where every decision lives" `commands/review.md` row; worktree/exhaustive sections if those flags' semantics changed |
-| `config.schema.json` keys | "Configuration" key list (+ trackers/worktree/MCP note) | "Configuration" per-key table; plus the section keyed to that config (worktree → worktree sections; verify/escalation → "Bounded adversarial verification"; exhaustive → "Exhaustive mode"; risk_map/mandatory_checks → triage/tiers floors; trackers → intake/context) |
-| Worktree behavior (`lib/worktree.mjs`) | "What it does" worktree bullet; Requirements "git remote" row; the preflight/worktree pipeline step; "Layout" worktree.mjs line; config worktree key; Roadmap done-item | "Reviewing the latest pushed code" (setup steps, naming scheme, config shape, fallback); "Where every decision lives" worktree.mjs row |
+| A `/review` CLI flag or command (`commands/review.md`) | "/review flags" table (Quickstart); any feature bullet citing the flag (`--no-checkout`, `--exhaustive`, `--gate`/`--comment`); "Layout" commands line; Install if a command was added/removed | "Deliver" stage + "Where every decision lives" `commands/review.md` row; checkout/exhaustive sections if those flags' semantics changed |
+| `config.schema.json` keys | "Configuration" key list (+ trackers/checkout/MCP note) | "Configuration" per-key table; plus the section keyed to that config (checkout → checkout sections; verify/escalation → "Bounded adversarial verification"; exhaustive → "Exhaustive mode"; risk_map/mandatory_checks → triage/tiers floors; trackers → intake/context) |
+| Checkout behavior (`lib/checkout.mjs`) | "What it does" checkout bullet; Requirements "git remote" row; the preflight/checkout pipeline step; "Layout" checkout.mjs line; config checkout key; Roadmap done-item | "Reviewing the latest pushed code" (setup steps, detach/restore, config shape, fallback); "Where every decision lives" checkout.mjs row |
 | MCP-tracker behavior (`lib/gather.mjs`) | "What it does" intent bullet; Requirements MCP row; the Context pipeline step; config `trackers` note; Roadmap done-item | "Context" stage; Configuration `trackers`/`intent_sources` rows; "Where every decision lives" gather.mjs row |
 | Plugin version | Roadmap "Done (v<new>)" + any "v<old> adds…" prose | re-check any "v<old> adds…" notes and feature claims (agent/dimension counts) the release changes |
 

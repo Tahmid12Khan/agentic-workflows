@@ -139,18 +139,13 @@ test('reports state whether each enabled tracker was used (off ones omitted)', (
   assert.doesNotMatch(off, /ClickUp|Jira/);
 });
 
-test('reports name the worktree(s) the review ran in', () => {
-  const worktrees = [{
-    name: 'review-pr-7-feature-abc12345',
-    path: '.adverserial-code-review/worktrees/review-pr-7-feature-abc12345',
-    baseRef: 'origin/main', headRef: 'origin/feature',
-  }];
-  const md = renderReport({ findings, criteria, tier: 'standard', worktrees });
+test('reports name the head/base the review was checked out against', () => {
+  const checkout = { baseRef: 'origin/main', headRef: 'origin/feature', sha: 'abc12345def67890' };
+  const md = renderReport({ findings, criteria, tier: 'standard', checkout });
   assert.match(md, /## Context used/);
-  assert.match(md, /Worktree review-pr-7-feature-abc12345/);
-  assert.match(md, /origin\/feature vs origin\/main/);
-  const html = renderHtml({ findings, criteria, tier: 'standard', worktrees });
-  assert.match(html, /Worktree review-pr-7-feature-abc12345/);
+  assert.match(md, /Reviewed origin\/feature vs origin\/main @ abc12345/);
+  const html = renderHtml({ findings, criteria, tier: 'standard', checkout });
+  assert.match(html, /Reviewed origin\/feature vs origin\/main @ abc12345/);
 });
 
 test('needs-input items render even as bare strings or sparse objects (no empty cards)', () => {

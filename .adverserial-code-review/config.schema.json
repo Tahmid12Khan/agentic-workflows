@@ -70,14 +70,12 @@
       },
       "additionalProperties": false
     },
-    "worktree": {
+    "checkout": {
       "type": "object",
-      "description": "Run the review in a git worktree checked out from the remote's latest base/head, so it sees the most recent pushed code.",
+      "description": "Detach HEAD onto the remote's latest pushed head for the review (restored afterwards), so the reviewers see the most recent pushed code rather than the local checkout. Disable to review the working tree in place.",
       "properties": {
         "enabled": { "type": "boolean" },
-        "remote": { "type": "string" },
-        "base_dir": { "type": "string" },
-        "keep": { "type": "boolean" }
+        "remote": { "type": "string" }
       },
       "additionalProperties": false
     },

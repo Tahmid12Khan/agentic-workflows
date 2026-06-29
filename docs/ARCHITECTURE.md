@@ -60,7 +60,7 @@ Every review runs the same eight stages. Stages 1–3 are run by the main agent 
 
 ```mermaid
 flowchart TD
-  A["1 · INTAKE<br/><i>preflight.mjs · worktree.mjs</i><br/>verify env; check out a worktree of<br/>the remote's latest base/head"]
+  A["1 · INTAKE<br/><i>preflight.mjs · checkout.mjs</i><br/>verify env; detach HEAD onto<br/>the remote's latest head (restored after)"]
   B["2 · CONTEXT<br/><i>gather.mjs · memory.mjs · scan.mjs</i><br/>PR body, existing comments,<br/>ClickUp/Jira (via MCP), learnings, CVE scan"]
   C["3 · TRIAGE<br/><i>plan.mjs + triage.mjs</i><br/>diff → tier, dimensions, models,<br/>shards, verify/escalation budgets"]
   D["4 · INTENT<br/><i>triage-classifier · intent-harvester<br/>· intent-grouper · business-logic-analyzer</i><br/>tier sanity-check, stated vs actual,<br/>primary vs extra, open questions"]
@@ -81,7 +81,7 @@ flowchart TD
 
 What each stage contributes:
 
-1. **Intake** — `preflight.mjs` checks Node + git are present (and notes whether `gh` and the CVE scanners are available). Hard-fails fast so you don't waste a review on a broken environment. Then, unless disabled, `worktree.mjs` fetches the PR's base + head from the remote and checks out a throwaway git worktree at the **latest pushed** head — the rest of the review reads code and computes the diff there, so it never reviews a stale local checkout. Its name is recorded in the report and it is removed afterwards (`keep:true` keeps it).
+1. **Intake** — `preflight.mjs` checks Node + git are present (and notes whether `gh` and the CVE scanners are available). Hard-fails fast so you don't waste a review on a broken environment. Then, unless disabled, `checkout.mjs` fetches the PR's base + head from the remote and **detaches HEAD onto the latest pushed head** — the rest of the review reads code and computes the diff there, so it never reviews a stale local checkout. The head/base is recorded in the report, and your original branch is restored afterwards. A dirty working tree stops the run with a stash-and-rerun message (it never stashes for you).
 2. **Context** — `gather.mjs` pulls the PR body, **existing PR/inline comments**, ClickUp/Jira issue keys (whose tickets the orchestrator then fetches via MCP — no API tokens), and project rules into one bundle; `memory.mjs` loads prior learnings (recurring findings, accepted false-positives, open questions); `scan.mjs` runs `npm audit` / `pip-audit` when available to seed the dependency dimension. Missing tools degrade gracefully and are noted in the report.
 3. **Triage** — the brain. See [The triage brain](#the-triage-brain).
 4. **Intent** — the Workflow opens with `triage-classifier` (haiku, skipped on the trivial tier where dimensions are fixed), a judgment pass on the deterministic tier: it can flag a **higher** tier for the human (it can't safely re-plan mid-run) and **adds dimensions the rules missed**, which become real review aspects. Then it builds the acceptance-criteria model: what the change *says* it does (PR/comments/tickets) vs. what the code *actually* does, and where the two diverge. Splits the primary intent from **extra / unexplained** changes and flags the extras for scope-creep control. Material business-logic ambiguities become *questions for you*, not silent assumptions.
@@ -92,29 +92,35 @@ What each stage contributes:
 
 ---
 
-## Reviewing the latest pushed code (the worktree)
+## Reviewing the latest pushed code (the checkout)
 
 A review is only as good as the code it reads. Reviewing your **local** checkout can mean
 reviewing a stale branch — or missing a fix that only exists on the remote. So, unless turned
-off, the pipeline reviews a fresh checkout of the **remote's latest** base and head.
+off, the pipeline detaches HEAD onto the **remote's latest** head before reviewing. This also
+means the reviewer subagents' own `Read`/`Grep` (which run in the main repo, not in any sandbox)
+see the real target code, not whatever branch you happened to have checked out.
 
-`lib/worktree.mjs` (a deterministic CLI) does three things on `setup`:
+`lib/checkout.mjs` (a deterministic CLI) does this on `setup`:
 
 1. **Fetch** the PR's base + head from the remote (`git fetch --no-tags <remote> <base> <head>`).
-2. **Check out** a detached **git worktree** at `<remote>/<head>` under `<base_dir>` (default `.adverserial-code-review/worktrees/`), named `review-[pr-<n>-]<head>-<sha8>`.
-3. **Return** the path, the resolved `baseRef`/`headRef`, the diff `range` (`baseRef..HEAD`), and `behindBase` — the commits the base has that the head has **not** integrated.
+2. **Record** the current ref to restore afterward — the branch name, or (already detached) the sha.
+3. **Detach** HEAD onto `<remote>/<head>` (`git checkout --detach <remote>/<head>`). If the working tree has changes git would overwrite, it prints a **stash-and-rerun** message and exits non-zero — it **never stashes for you** (could silently lose work, and the plugin is advisory).
+4. **Return** the resolved `baseRef`/`headRef`, the head `sha`, the `originalRef` to restore, the diff `range` (`baseRef..HEAD`), and `behindBase` — the commits the base has that the head has **not** integrated.
+
+Because the diff is two-dot `git diff <base>..HEAD`, moving HEAD onto the latest head is exactly
+what makes the whole downstream pipeline (`plan.mjs`, `gather.mjs`, the reviewers) operate on the
+most recent pushed code — no separate working directory is involved.
 
 When `behindBase.count > 0` the head is behind its base: the two-dot `base..head` diff is then computed against a base the branch hasn't merged, so it can miss real conflicts and renders base's newer commits as phantom deletions. `/review` lists those commits and asks the user to rebase or merge the base in before re-running. It is **advisory** — the user can proceed anyway; the review never hard-blocks on this.
 
-The rest of the pipeline (triage, gather, the reviewers, the diff) runs **inside that worktree**,
-so it always sees the most recent pushed code. The **report is written from the main repo** so it
-survives teardown, and the worktree's **name is recorded in the report** (under *Context used*).
-On finish the worktree is removed (`remove --path`), unless `worktree.keep` is `true`.
+The **head/base reviewed is recorded in the report** (under *Context used*). After the report is
+written, `/review` runs `checkout.mjs restore --ref <originalRef>` to put the user back on their
+original branch — and warns if the restore fails (so they aren't stranded on a detached HEAD).
 
-It is **best-effort**: if the fetch fails (offline / no remote) it notes the skip and falls back
-to whatever ref resolves locally. Set `worktree.enabled: false` or pass `--no-worktree` to review
-the local working tree instead — required when reviewing **uncommitted** changes, since a worktree
-only sees committed refs. Config: `worktree` → `{ enabled, remote, base_dir, keep }`.
+It is **best-effort** on fetch: if the fetch fails (offline / no remote) it notes the skip and
+falls back to whatever ref resolves locally. Set `checkout.enabled: false` or pass `--no-checkout`
+to review the local working tree **in place** — required when reviewing **uncommitted** changes,
+since a checkout only sees committed refs. Config: `checkout` → `{ enabled, remote }`.
 
 ---
 
@@ -390,7 +396,7 @@ optional and falls back to a sensible default.
 | `escalation` | spawn-on-doubt cap (subagents per aspect). |
 | `large_diff` | `shard_threshold_loc`, `max_shards`. |
 | `scan` | run `deps` / `tests` / `lint` tools when available (advisory). |
-| `worktree` | run the review in a git worktree checked out from the remote's latest base/head: `enabled`, `remote`, `base_dir`, `keep`. |
+| `checkout` | detach HEAD onto the remote's latest head for the review (restored afterward): `enabled`, `remote`. |
 | `learning` | per-project memory: `enabled`, `store` path. |
 | `notify` | `ask_on_unresolved` — surface open questions instead of assuming. |
 | `trackers` | ClickUp/Jira key patterns. **Tickets are fetched via MCP by the orchestrator — no API tokens stored or used.** |
@@ -421,7 +427,7 @@ the source or filing a bug.
 | render + gate + memory record | `lib/report.mjs` | (CLI) |
 | inline PR comments via `gh` | `lib/comments.mjs` | (CLI) |
 | PR / comments / trackers → context | `lib/gather.mjs` | (CLI) |
-| latest-code worktree setup / teardown | `lib/worktree.mjs` | `worktreeName`, `fetchArgs`, `addArgs`, `removeArgs` |
+| latest-code checkout / restore | `lib/checkout.mjs` | `fetchArgs`, `checkoutDetachArgs`, `restoreArgs`, `commitsBehindArgs` |
 | per-project learnings store | `lib/memory.mjs` | `findingKey`, load/record |
 | dependency CVE scan | `lib/scan.mjs` | (CLI) |
 | environment check | `lib/preflight.mjs` | (CLI) |
