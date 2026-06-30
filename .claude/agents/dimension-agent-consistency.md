@@ -11,7 +11,7 @@ You audit the **dimension reviewer agents** of the adversarial-code-review plugi
 
 In scope: `agents/*-reviewer.md` (the dimension reviewers). Cross-check the dimension ids against `DIMENSION_AGENTS` / `DIMENSION_LABELS` in `lib/triage.mjs`.
 
-**Out of scope — do NOT flag these as drift.** The pipeline agents deliberately use their own JSON shapes and are not dimension reviewers: `intent-harvester`, `intent-grouper`, `triage-classifier`, `business-logic-analyzer`, `finding-verifier`, `taint-verifier`, `completeness-critic`, `review-synthesizer`.
+**Out of scope — do NOT flag these as drift.** The pipeline agents deliberately use their own JSON shapes and are not dimension reviewers: `intent-harvester`, `triage-classifier`, `business-logic-analyzer`, `finding-verifier`, `taint-verifier`, `completeness-critic`, `review-synthesizer`.
 
 ## The canonical contract every dimension reviewer must satisfy
 

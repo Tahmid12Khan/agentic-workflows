@@ -3,6 +3,13 @@
 Release log for the **adversarial-code-review** plugin. Newest first. The forward-looking
 plan lives in [ROADMAP.md](ROADMAP.md). Source-of-truth version: `.claude-plugin/plugin.json`.
 
+## v0.9.0
+
+- **`intent-grouper` folded into `intent-harvester`** (`agents/intent-harvester.md`, `lib/review-workflow.mjs`, `lib/render.mjs`): the former `intent-grouper` agent is eliminated; `intent-harvester` now produces both the acceptance-criteria model (stated vs derived intent, mismatches) and the primary-vs-extra intent grouping in a single pass. Agent count drops from 22 to 21. The `groups` and `extraIntents` fields are new in the harvester's JSON output; downstream review agents consume them directly.
+- **`stripNoise` for Intent-phase diffs** (`lib/trim-diff.mjs`): new `stripNoise(diff)` function strips mechanically-generated / vendored sections (lockfiles, build artifacts, sourcemaps, snapshots) from the diff before it reaches the Intent-phase agents — none of them review a lockfile, and a dependency bump is already signalled elsewhere (`depsChanged → D15`). Falls back to the full diff if stripping would drop everything or the input isn't a parseable git diff. 6 tests added.
+- **`NOISE_RE` single source of truth** (`lib/trim-diff.mjs` → `lib/plan.mjs`): the noise regex that `plan.mjs` used to duplicate inline is now exported as `NOISE_RE` from `lib/trim-diff.mjs` and imported by `plan.mjs`, so the file-list filter and the diff-strip agree on what "noise" is.
+- **Diff-first prompt caching for Intent phase** (`lib/review-workflow.mjs`): the intent-harvester and business-logic-analyzer calls now receive the (noise-stripped) diff as the *first* token in the prompt — a constant prefix shared between both calls — so the dominant diff input prompt-caches across the two agents rather than being re-read twice.
+
 ## v0.8.1
 
 - **Token usage + USD cost panel** (`lib/usage.mjs`): `review.html` now shows a top-left panel with the input, cache-read, cache-write, and output token counts plus the USD cost for this review run. The cost is summed from the session's main transcript and all subagent transcripts (`<session>.jsonl` + `<session>/subagents/agent-*.jsonl`) within the review's time window. Best-effort: degrades to a note and no panel when transcripts aren't reachable — never fails the report. Pricing defaults cover Opus, Sonnet, Haiku, and Fable with the 5m/1h cache-write split; overridable per model-family per field via `usage.pricing` in config. Set `usage.enabled: false` to hide the panel entirely.
