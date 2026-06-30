@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { shouldShard, shardFiles, singleShard } from '../lib/shard.mjs';
-import { verifyPolicy, selectForVerification, resolveVerification, partition, lensFor } from '../lib/verify.mjs';
+import { verifyPolicy, selectForVerification, resolveVerification, partition, lensFor, firstPassModel, shouldEscalate } from '../lib/verify.mjs';
 import { applyLearnings, dedupAgainstPrevious, recordRun, findingKey, EMPTY } from '../lib/memory.mjs';
 import { renderHtml } from '../lib/render.mjs';
 import { parseNpmAudit, parsePipAudit } from '../lib/scan.mjs';
@@ -49,6 +49,29 @@ test('selectForVerification re-checks high-severity on risk paths even at high c
   const f = [{ title: 'authz gap', confidence: 99, severity: 'critical', file: 'src/auth/guard.ts' }];
   const sel = selectForVerification(f, verifyPolicy({}), { riskPaths: ['auth'] });
   assert.equal(sel.length, 1);
+});
+
+// --- cheap→strong verifier escalation ---
+test('firstPassModel: critical goes straight to the strong model; others get the cheap one', () => {
+  const p = verifyPolicy({});                                  // defaults: sonnet→opus, direct=[critical]
+  assert.equal(firstPassModel({ severity: 'critical' }, p), 'opus');
+  assert.equal(firstPassModel({ severity: 'important' }, p), 'sonnet');
+  assert.equal(firstPassModel({ severity: 'minor' }, p), 'sonnet');
+});
+
+test('firstPassModel honours configured models + escalate_direct_severity', () => {
+  const p = verifyPolicy({ verify: { model_first: 'haiku', model_escalate: 'sonnet', escalate_direct_severity: ['critical', 'important'] } });
+  assert.equal(firstPassModel({ severity: 'important' }, p), 'sonnet'); // now direct
+  assert.equal(firstPassModel({ severity: 'minor' }, p), 'haiku');      // cheap
+});
+
+test('shouldEscalate: uncertain (any severity) and hot-refuted escalate; clean non-hot verdicts do not', () => {
+  const p = verifyPolicy({});
+  assert.equal(shouldEscalate({ severity: 'minor' }, { verdict: 'uncertain' }, p), true);
+  assert.equal(shouldEscalate({ severity: 'important' }, { verdict: 'refuted' }, p), true);  // hot_refuted
+  assert.equal(shouldEscalate({ severity: 'minor' }, { verdict: 'refuted' }, p), false);     // not hot
+  assert.equal(shouldEscalate({ severity: 'critical' }, { verdict: 'real' }, p), false);     // confirmed, no escalate
+  assert.equal(shouldEscalate({ severity: 'important' }, 'refuted', p), true);               // bare-string verdict
 });
 test('resolveVerification: majority refute drops, majority real keeps', () => {
   const f = { title: 'x', confidence: 60, severity: 'important' };

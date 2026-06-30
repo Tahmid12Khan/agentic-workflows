@@ -40,7 +40,10 @@
         "max_subagents_per_aspect": { "type": "integer", "minimum": 1, "maximum": 3 },
         "reverify_below": { "type": "integer", "minimum": 0, "maximum": 100, "description": "Findings with confidence below this are sent to the verifier." },
         "report_confidence": { "type": "integer", "minimum": 0, "maximum": 100, "description": "Findings at/above this survive to the report." },
-        "escalate_uncertain": { "type": "boolean", "description": "Still-uncertain after the cap → surface to the human, do not drop." }
+        "escalate_uncertain": { "type": "boolean", "description": "Still-uncertain after the cap → surface to the human, do not drop." },
+        "model_first": { "type": "string", "description": "Model for the first (cheap) verifier pass. Default 'sonnet'." },
+        "model_escalate": { "type": "string", "description": "Model the verifier escalates to on an uncertain or hot-refuted verdict, and runs directly for the severities in escalate_direct_severity. Its verdict is authoritative — the cheap one is discarded. Default 'opus'." },
+        "escalate_direct_severity": { "type": "array", "items": { "type": "string", "enum": ["critical", "important", "minor", "suggestion"] }, "description": "Severities that skip the cheap pass and go straight to model_escalate. Default ['critical']." }
       },
       "additionalProperties": false
     },

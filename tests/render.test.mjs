@@ -34,6 +34,37 @@ test('traceability leads with the requirement name, keeps the AC id as a tag', (
   assert.match(md, /\*\*only admins can delete\*\* `AC1`/);
 });
 
+test('summaryPoints render as bullets under the headline (md + html)', () => {
+  const opts = { findings, criteria, tier: 'standard', summary: 'No blockers; merge after OTel sign-off.', summaryPoints: ['Java 25 bump applied consistently', 'OTel sampling reversed — needs owner sign-off'] };
+  const md = renderReport(opts);
+  assert.match(md, /No blockers; merge after OTel sign-off\./);
+  assert.match(md, /- Java 25 bump applied consistently/);
+  assert.match(md, /- OTel sampling reversed/);
+  const html = renderHtml(opts);
+  assert.match(html, /<ul class="sum">/);
+  assert.match(html, /<li>Java 25 bump applied consistently<\/li>/);
+});
+
+test('a finding the verifier looked at shows "verified ×N"; a trusted one shows "trusted"', () => {
+  const mixed = [
+    { dimension: 'D3', severity: 'critical', file: 'a.ts', line: 1, title: 'really checked', confidence: 90, verify: { passes: 2, real: 1, refuted: 0 } },
+    { dimension: 'D2', severity: 'minor', file: 'b.ts', line: 2, title: 'just trusted', confidence: 92 },
+  ];
+  const md = renderReport({ findings: mixed, criteria, tier: 'high' });
+  assert.match(md, /really checked\*\* \(D3 · verified ×2\)/);
+  assert.match(md, /just trusted\*\* \(D2 · trusted\)/);
+  const html = renderHtml({ findings: mixed, criteria, tier: 'high' });
+  assert.match(html, /verified ×2<\/b> \(1✓\/0✗\)/);
+  assert.match(html, / · trusted · conf 92/);
+});
+
+test('passes===1 (no verifier look) is trusted, not "verified ×1"', () => {
+  const trustedOnly = [{ dimension: 'D2', severity: 'minor', file: 'c.ts', line: 3, title: 'carried through', confidence: 88, verify: { passes: 1, real: 0, refuted: 0 } }];
+  const md = renderReport({ findings: trustedOnly, criteria, tier: 'standard' });
+  assert.match(md, /carried through\*\* \(D2 · trusted\)/);
+  assert.doesNotMatch(md, /verified ×1/);
+});
+
 const standardPlan = {
   tier: 'standard',
   dimensions: ['D1', 'D2', 'D4', 'D5', 'D12', 'D16'],

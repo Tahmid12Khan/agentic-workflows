@@ -3,6 +3,16 @@
 Release log for the **adversarial-code-review** plugin. Newest first. The forward-looking
 plan lives in [ROADMAP.md](ROADMAP.md). Source-of-truth version: `.claude-plugin/plugin.json`.
 
+## v0.8.0
+
+- **Cheap→strong verifier escalation** (`lib/verify.mjs`, `lib/review-workflow.mjs`): critical findings skip the cheap pass and go straight to `opus`; uncertain or hot-refuted verdicts (critical/important/high) from the cheap pass escalate automatically — the strong verdict is then authoritative. Configurable via `verify.model_first`, `verify.model_escalate`, and `verify.escalate_direct_severity` in config.
+- **Per-finding diff scoping for verifiers**: verifiers now receive only the hunks for the finding's own file (`filterDiff` file-scoped) instead of the full diff — a large token reduction. D3/taint-verifier keeps the full diff so cross-file source→sink tracing survives.
+- **Summary points** (`agents/review-synthesizer.md`, `lib/render.mjs`): the synthesizer now emits a `summaryPoints` array (3–6 scannable bullets) alongside the one-sentence `summary`. Both MD and HTML reports render the bullets as a list under the headline, replacing the wall-of-paragraph verdict.
+- **Verified-vs-trusted distinction** (`lib/render.mjs`): findings the verifier actually looked at show `verified ×N`; high-confidence findings that were trusted on reviewer confidence (the cost policy) show `trusted` — the absence of a verified tag is now explicit, never ambiguous.
+- **Verify block propagation**: the finding schema now carries each finding's `verify` block through synthesis so the report can display per-finding verification state; synthesizer instructions updated to copy the block verbatim.
+- **Policy correctness fix** (`lib/review-workflow.mjs`): `plan.verify` (already resolved to camelCase in `plan.mjs`) is merged directly over `DEFAULT_VERIFY`; the old `cleanVerify()` re-resolution — which silently reverted custom config back to defaults — is removed.
+- **Prompt cache fix** (from v0.7.1 hotfix, now fully landed): verifier prompt puts the diff first (constant across findings) and the per-finding JSON last, making the shared prefix eligible for cache reuse.
+
 ## v0.7.1
 
 - **Docs split** — the release log moved out of `README.md` into this file (`RELEASES.md`) and the forward-looking plan into [ROADMAP.md](ROADMAP.md); `README.md` now links to both instead of carrying a "Roadmap" section. No behavior change.

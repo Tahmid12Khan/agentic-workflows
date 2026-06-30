@@ -86,8 +86,8 @@ What each stage contributes:
 3. **Triage** — the brain. See [The triage brain](#the-triage-brain).
 4. **Intent** — the Workflow opens with `triage-classifier` (haiku, skipped on the trivial tier where dimensions are fixed), a judgment pass on the deterministic tier: it can flag a **higher** tier for the human (it can't safely re-plan mid-run) and **adds dimensions the rules missed**, which become real review aspects. Then it builds the acceptance-criteria model: what the change *says* it does (PR/comments/tickets) vs. what the code *actually* does, and where the two diverge. Splits the primary intent from **extra / unexplained** changes and flags the extras for scope-creep control. Material business-logic ambiguities become *questions for you*, not silent assumptions.
 5. **Review** — fans out reviewers inside the Workflow. The always-on `correctness-reviewer` plus one specialist per planned dimension, each on the model `triage` chose for that dimension, each on its own shard for large diffs. Every reviewer gets a **clean packet** (intent + criteria + diff) and never the chat history. On a sharded review the diff is **scoped to the reviewer's shard files** (`lib/trim-diff.mjs`) to cut the dominant input-token cost — except D3/security, which always sees the full diff so cross-file taint source→sink survives; reviewers can Read/Grep for any sibling context the scoped diff omits.
-6. **Verify (the unsure findings)** — the Workflow spawns a **separate verification agent for each unsure finding** — low-confidence, flagged uncertain, or high-severity on a risk path (`selectForVerification`) — on tiers where `plan.runVerify` is true; confident, non-risk findings are trusted and ship at the ≥80 gate. Each verifier attacks from a dimension-appropriate lens; the ≤ 3 subagents/aspect cap is enforced in code. See [Bounded adversarial verification](#bounded-adversarial-verification). On **exhaustive** reviews (`plan.discovery.completenessCritic`, auto at `critical`) a `completeness-critic` then hunts for what the fan-out **missed** — an unrun dimension, an uncovered criterion, an untraced input→sink — and re-dispatches up to 6 targeted reviewers whose new findings (deduped against the existing set) all re-enter Verify before synthesis.
-7. **Synthesize** — `review-synthesizer` dedupes, builds the requirement→code traceability matrix, separates confident findings from open questions, and emits one verdict.
+6. **Verify (the unsure findings)** — the Workflow spawns a **separate verification agent for each unsure finding** — low-confidence, flagged uncertain, or high-severity on a risk path (`selectForVerification`) — on tiers where `plan.runVerify` is true; confident, non-risk findings are trusted and ship at the ≥80 gate. Each verifier attacks from a dimension-appropriate lens on a diff **scoped to the finding's own file** (`verifierDiff`, the same `lib/trim-diff.mjs` trim the reviewers use) — except the D3 `taint-verifier`, which keeps the full diff so cross-file source→sink survives — and **escalates cheap→strong** (`sonnet` first, `opus` on an uncertain/hot-refuted verdict; `critical` straight to `opus`); the ≤ 3 subagents/aspect cap is enforced in code. See [Bounded adversarial verification](#bounded-adversarial-verification). On **exhaustive** reviews (`plan.discovery.completenessCritic`, auto at `critical`) a `completeness-critic` then hunts for what the fan-out **missed** — an unrun dimension, an uncovered criterion, an untraced input→sink — and re-dispatches up to 6 targeted reviewers whose new findings (deduped against the existing set) all re-enter Verify before synthesis.
+7. **Synthesize** — `review-synthesizer` dedupes, builds the requirement→code traceability matrix, separates confident findings from open questions, and emits one verdict — a one-sentence headline plus a short bulleted `summaryPoints` list (the report renders bullets, not a wall paragraph).
 8. **Deliver** — the Workflow returns the assembled report **payload**; the `/review` command then runs `report.mjs` **directly via node** (no executor agent — the Workflow sandbox can't write files, and broadcasting the whole payload to a model that only shells out is pure input-token waste). `report.mjs` writes `review.md` + `review.html` into a per-run folder `.adverserial-code-review/review-<YYYY-MM-DD>/review-<n>[-pr-<num>]/` (an outer folder per day, an inner folder per run; each report names the PR and its start/finish times). It exposes `generateReport()` as a function that degrades soft failures (memory, file write) to notes and never crashes the run; only a missing-plan/agentRuns contract violation or a `--gate` BLOCK exits non-zero. The report **always** includes an "Agents & coverage" section (Ran / Did not run). `report.mjs` accepts no `--out`/`--html` flags; the per-run folder is always written. Terminal summary + gate exit code (with `--gate`); `--comment` posts inline PR comments via `comments.mjs`; the run is recorded to memory; unresolved questions are surfaced to you.
 
 ---
@@ -237,7 +237,10 @@ canonically `lib/review-orchestration.mjs` — must clear before every dispatch)
 
 `selectForVerification` is the live gate: a confident, non-risk finding is trusted and
 ships at the ≥80 gate without spending a verifier; the unsure ones — uncertain,
-low-confidence, or high-severity-on-a-risk-path — are the ones refuted. The pure helper is
+low-confidence, or high-severity-on-a-risk-path — are the ones refuted. The report makes this
+visible per finding — `verified ×N (✓/✗)` when a verifier actually looked (`verify.passes > 1`)
+versus `trusted` when it shipped on confidence alone — so an absent "verified" tag reads as a
+deliberate skip, not a missing check. The pure helper is
 canonical + unit-tested in `lib/verify.mjs` and inlined into the Workflow:
 
 ```mermaid
@@ -266,6 +269,16 @@ spots don't survive where the cost-of-miss is highest:
 | D9 perf | realistic input scale, super-linear blow-up | finding-verifier |
 | D4 / D10 / D11 / D14 | error path / contract break / illegal state / visibility | finding-verifier |
 | anything else | re-read the real code path on the changed lines | finding-verifier |
+
+### Which model verifies (cheap→strong escalation, `firstPassModel` / `shouldEscalate`)
+
+The verifier spends the cheap model first and the strong model only where it earns its cost:
+
+- **`firstPassModel`** — a `critical` finding (configurable via `verify.escalate_direct_severity`) skips the cheap pass and is refuted directly on the strong model (`verify.model_escalate`, default `opus`); everything else gets the cheap model first (`verify.model_first`, default `sonnet`).
+- **`shouldEscalate`** — after a cheap pass, escalate to the strong model when the cheap verdict can't stand alone: it was `uncertain`, or it `refuted` a hot (`critical`/`important`/`high`) finding — never drop a hot finding on a single cheap refuter. A clean confirm/refute of a non-hot finding stands as-is.
+- On escalation the **strong verdict is authoritative** — the cheap one is discarded (a single verdict still feeds `resolveVerification`). Escalation spends one more of the ≤ 3-subagents-per-aspect budget, so it stays inside the same cap.
+
+Both helpers are pure + unit-tested in `lib/verify.mjs` and inlined into the Workflow. The policy itself is resolved **once** in `plan.mjs` (`verifyPolicy(config)` → `plan.verify`, camelCase); the Workflow sandbox consumes that resolved object directly and never re-parses raw config.
 
 ### How a verdict is decided (`resolveVerification`)
 
@@ -392,7 +405,7 @@ optional and falls back to a sensible default.
 | `project_rules` | house rules fed into every reviewer packet (drives D12). |
 | `intent_sources` | toggle PR / commits / pr_comments / clickup / jira as intent inputs. |
 | `gate` | `block_on` / `warn_on` severity lists → the `APPROVE`/`WARN`/`BLOCK` verdict. |
-| `verify` | bounded-verify policy: passes/aspect, subagents/aspect, `reverify_below`, `report_confidence`, `escalate_uncertain`. |
+| `verify` | bounded-verify policy: passes/aspect, subagents/aspect, `reverify_below`, `report_confidence`, `escalate_uncertain`, and the cheap→strong escalation (`model_first`, `model_escalate`, `escalate_direct_severity`). |
 | `escalation` | spawn-on-doubt cap (subagents per aspect). |
 | `large_diff` | `shard_threshold_loc`, `max_shards`. |
 | `scan` | run `deps` / `tests` / `lint` tools when available (advisory). |

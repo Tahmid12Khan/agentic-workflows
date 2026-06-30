@@ -64,6 +64,10 @@ test('plan.mjs emits a JSON plan with the expected keys', () => {
     assert.ok(k in out, `plan missing key ${k}`);
   }
   assert.ok(out.verify.maxPassesPerAspect <= 3);
+  // the resolved verify policy carries the escalation models through to the sandbox (camelCase)
+  assert.equal(out.verify.modelFirst, 'sonnet');
+  assert.equal(out.verify.modelEscalate, 'opus');
+  assert.deepEqual(out.verify.escalateDirectSeverity, ['critical']);
 });
 
 test('verify.mjs select picks only the low-confidence finding', () => {

@@ -73,8 +73,13 @@ test('review-workflow.mjs declares a valid meta with 4 phases', () => {
   assert.match(src, /function partition\(/, 'partition must be inlined');
   // verification is bounded by selectForVerification (verify the unsure, not every finding)
   assert.match(src, /selectForVerification\(rev\.findings/, 'verify must gate through selectForVerification');
-  // policy is wrapped so maxVerifierPasses is derived (raw plan.verify would break the cap)
-  assert.match(src, /verifyPolicy\(\{ verify: plan\.verify \}\)/);
+  // plan.verify is consumed AS RESOLVED (camelCase, from plan.mjs) — merged over defaults, not
+  // re-resolved through cleanVerify (which maps only snake_case and would revert custom config).
+  assert.match(src, /\{ \.\.\.DEFAULT_VERIFY, \.\.\.\(plan\.verify \?\? \{\}\) \}/, 'policy must merge the resolved plan.verify');
+  assert.doesNotMatch(src, /function cleanVerify\(/, 'cleanVerify must NOT be re-inlined — config is resolved once in plan.mjs');
+  // cheap→strong verifier escalation helpers are inlined (canonical: lib/verify.mjs)
+  assert.match(src, /function firstPassModel\(/, 'firstPassModel must be inlined (canonical: lib/verify.mjs)');
+  assert.match(src, /function shouldEscalate\(/, 'shouldEscalate must be inlined (canonical: lib/verify.mjs)');
   // diff-trim (rank 1) is inlined + canonical in lib/trim-diff.mjs; D3 (security) stays on the full diff
   assert.match(src, /function filterDiff\(/, 'filterDiff must be inlined (canonical: lib/trim-diff.mjs)');
   assert.match(src, /diffForAspect/, 'dimension reviewers must use the shard-scoped diffForAspect');

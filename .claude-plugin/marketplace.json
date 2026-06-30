@@ -3,14 +3,14 @@
   "owner": { "name": "Tahmid" },
   "metadata": {
     "description": "Advisory, criticality-aware code review for Claude Code.",
-    "version": "0.7.1"
+    "version": "0.8.0"
   },
   "plugins": [
     {
       "name": "adversarial-code-review",
       "source": "./",
       "description": "Advisory, criticality-aware code review. Scales depth to change risk; reports findings, never edits code.",
-      "version": "0.7.1",
+      "version": "0.8.0",
       "keywords": ["code-review", "review", "quality", "security"]
     }
   ]
