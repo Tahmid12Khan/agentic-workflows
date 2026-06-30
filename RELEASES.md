@@ -3,6 +3,10 @@
 Release log for the **adversarial-code-review** plugin. Newest first. The forward-looking
 plan lives in [ROADMAP.md](ROADMAP.md). Source-of-truth version: `.claude-plugin/plugin.json`.
 
+## v0.8.1
+
+- **Token usage + USD cost panel** (`lib/usage.mjs`): `review.html` now shows a top-left panel with the input, cache-read, cache-write, and output token counts plus the USD cost for this review run. The cost is summed from the session's main transcript and all subagent transcripts (`<session>.jsonl` + `<session>/subagents/agent-*.jsonl`) within the review's time window. Best-effort: degrades to a note and no panel when transcripts aren't reachable — never fails the report. Pricing defaults cover Opus, Sonnet, Haiku, and Fable with the 5m/1h cache-write split; overridable per model-family per field via `usage.pricing` in config. Set `usage.enabled: false` to hide the panel entirely.
+
 ## v0.8.0
 
 - **Cheap→strong verifier escalation** (`lib/verify.mjs`, `lib/review-workflow.mjs`): critical findings skip the cheap pass and go straight to `opus`; uncertain or hot-refuted verdicts (critical/important/high) from the cheap pass escalate automatically — the strong verdict is then authoritative. Configurable via `verify.model_first`, `verify.model_escalate`, and `verify.escalate_direct_severity` in config.

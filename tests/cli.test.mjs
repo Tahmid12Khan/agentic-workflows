@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, existsSync, readFileSync, rmSync, readdirSync } from 'node:fs';
+import { mkdtempSync, existsSync, readFileSync, rmSync, readdirSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -218,4 +218,36 @@ test('preflight.mjs reports readiness', () => {
   // exits 0 when node+git present (this repo); just assert it runs and mentions node
   const out = run('preflight.mjs');
   assert.match(out, /preflight/i);
+});
+
+test('usage.mjs tallies this run from the session main + subagent transcripts in the window', () => {
+  const home = mkdtempSync(join(tmpdir(), 'acr-usage-'));
+  try {
+    const projDir = join(home, '.claude', 'projects', '-proj'); // encodeProjectDir('/proj')
+    const subDir = join(projDir, 'sess1', 'subagents');
+    mkdirSync(subDir, { recursive: true });
+    const line = (o) => JSON.stringify(o) + '\n';
+    // main transcript: one in-window opus turn, one before the window (must be excluded)
+    writeFileSync(join(projDir, 'sess1.jsonl'),
+      line({ timestamp: '2026-06-30T10:00:00Z', message: { model: 'claude-opus-4-8', usage: { input_tokens: 1000, output_tokens: 100, cache_read_input_tokens: 500, cache_creation_input_tokens: 50 } } }) +
+      line({ timestamp: '2026-06-30T08:00:00Z', message: { model: 'claude-opus-4-8', usage: { input_tokens: 9999 } } }));
+    // subagent transcript: one in-window sonnet reviewer turn
+    writeFileSync(join(subDir, 'agent-abc.jsonl'),
+      line({ timestamp: '2026-06-30T10:05:00Z', message: { model: 'claude-sonnet-4-6', usage: { input_tokens: 200, output_tokens: 20 } } }));
+
+    const out = JSON.parse(run('usage.mjs', ['--home', home, '--cwd', '/proj', '--session', 'sess1', '--since', '2026-06-30T09:00:00Z']));
+    assert.equal(out.usage.inputTokens, 1200);   // 1000 (main) + 200 (subagent); 9999 excluded by window
+    assert.equal(out.usage.outputTokens, 120);
+    assert.equal(out.usage.messages, 2);
+    assert.equal(out.usage.scope, 'session');
+    assert.ok(out.usage.costUsd > 0);
+  } finally { rmSync(home, { recursive: true, force: true }); }
+});
+
+test('usage.mjs returns null when there is no transcript dir (degrade, no panel)', () => {
+  const home = mkdtempSync(join(tmpdir(), 'acr-usage-empty-'));
+  try {
+    const out = JSON.parse(run('usage.mjs', ['--home', home, '--cwd', '/nope', '--session', 'x', '--since', '2026-06-30T00:00:00Z']));
+    assert.equal(out.usage, null);
+  } finally { rmSync(home, { recursive: true, force: true }); }
 });

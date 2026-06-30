@@ -116,7 +116,10 @@ tracked `config.json`; the generated `review-*` folders, `learnings.json`, and
 
 - **`review.html`** — a single self-contained file (inline CSS, no assets). Open it in any
   browser: `open .adverserial-code-review/review-*/review-*/review.html` (macOS) or just
-  double-click it. Best for reading.
+  double-click it. Best for reading. Its top-left **usage panel** shows what this run cost —
+  input tokens, cache reads, cache writes, output tokens, and USD cost — summed from this
+  review's session transcripts (orchestrator + every subagent) within the review window.
+  Pricing is overridable via `usage.pricing` in config; set `usage.enabled: false` to hide it.
 - **`review.md`** — the same content as Markdown. Renders inline on GitHub/GitLab or in any
   editor; good for diffs, PR descriptions, and grepping.
 
@@ -185,7 +188,7 @@ Each is isolated (clean packet: intent + criteria + diff, never the chat history
 
 ## Configuration — `.adverserial-code-review/config.json`
 
-Created by `/review-init`; schema at `.adverserial-code-review/config.schema.json`. Beyond `risk_map`, `mandatory_checks`, `project_rules`, `intent_sources`, and `gate`, v0.2 adds: `verify`, `escalation`, `large_diff`, `scan`, `learning`, `notify`, `checkout` (detach HEAD onto the remote's latest base/head for the review and restore it afterward — so it reviews the most recent pushed code, not the local checkout; the head/base reviewed is recorded in the report), and `trackers` (ClickUp/Jira — tickets fetched via MCP, **no API tokens**; if a tracker's MCP server isn't connected, `/review` asks you to enable it and the report states whether each tracker was used).
+Created by `/review-init`; schema at `.adverserial-code-review/config.schema.json`. Beyond `risk_map`, `mandatory_checks`, `project_rules`, `intent_sources`, and `gate`, v0.2 adds: `verify`, `escalation`, `large_diff`, `scan`, `learning`, `notify`, `checkout` (detach HEAD onto the remote's latest base/head for the review and restore it afterward — so it reviews the most recent pushed code, not the local checkout; the head/base reviewed is recorded in the report), `trackers` (ClickUp/Jira — tickets fetched via MCP, **no API tokens**; if a tracker's MCP server isn't connected, `/review` asks you to enable it and the report states whether each tracker was used), and `usage` (the cost panel — `usage.enabled` to toggle it, `usage.pricing` to override the per-model-family price table).
 
 ## Layout
 
@@ -205,6 +208,7 @@ lib/
   checkout.mjs    latest-code review: fetch remote base/head, detach HEAD onto head, restore after
   scan.mjs        npm/pip dependency CVE scan
   render.mjs      findings → review.md + review.html + verdict (pure)
+  usage.mjs       this run's token usage + USD cost from the session transcripts (CLI + lib)
   report.mjs      render + gate + memory record (CLI)
   review-workflow.mjs     Workflow DSL — fan-out (intent/review/verify/synthesize); returns the report payload
   review-orchestration.mjs  pure helpers for the Workflow (canonical + unit-tested)

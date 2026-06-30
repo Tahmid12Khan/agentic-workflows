@@ -128,6 +128,38 @@
       },
       "additionalProperties": false
     },
+    "usage": {
+      "type": "object",
+      "description": "Token-usage + USD-cost panel shown top-left of review.html. Summed from this run's session transcripts within the review window.",
+      "properties": {
+        "enabled": { "type": "boolean", "description": "Show the usage panel (default true). Set false to omit it." },
+        "pricing": {
+          "type": "object",
+          "description": "Override the per-model-family price table (USD per million tokens). Each family overlays the defaults field-by-field; omit a field to keep the default.",
+          "properties": {
+            "opus": { "$ref": "#/definitions/familyPrice" },
+            "sonnet": { "$ref": "#/definitions/familyPrice" },
+            "haiku": { "$ref": "#/definitions/familyPrice" },
+            "fable": { "$ref": "#/definitions/familyPrice" }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
     "knowledge_packs": { "type": "object" }
+  },
+  "definitions": {
+    "familyPrice": {
+      "type": "object",
+      "properties": {
+        "input": { "type": "number", "minimum": 0 },
+        "output": { "type": "number", "minimum": 0 },
+        "cacheWrite5m": { "type": "number", "minimum": 0 },
+        "cacheWrite1h": { "type": "number", "minimum": 0 },
+        "cacheRead": { "type": "number", "minimum": 0 }
+      },
+      "additionalProperties": false
+    }
   }
 }

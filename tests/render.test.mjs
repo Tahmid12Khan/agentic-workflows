@@ -179,6 +179,19 @@ test('reports name the head/base the review was checked out against', () => {
   assert.match(html, /Reviewed origin\/feature vs origin\/main @ abc12345/);
 });
 
+test('usage panel renders top-left when usage is present, omitted otherwise', () => {
+  const usage = { inputTokens: 23895, outputTokens: 739, cacheReadTokens: 20975, cacheWriteTokens: 6148, costUsd: 0.1234, messages: 5 };
+  const html = renderHtml({ findings, criteria, tier: 'standard', usage });
+  assert.match(html, /class="usage"/);
+  assert.match(html, /23,895/);          // thousands-separated token count
+  assert.match(html, /cache read/);
+  assert.match(html, /\$0\.1234/);       // sub-$1 cost shown to 4 dp
+  // panel sits before the header row (top-left)
+  assert.ok(html.indexOf('class="usage"') < html.indexOf('class="top"'));
+  // no usage → no panel, report unchanged
+  assert.doesNotMatch(renderHtml({ findings, criteria, tier: 'standard' }), /class="usage"/);
+});
+
 test('needs-input items render even as bare strings or sparse objects (no empty cards)', () => {
   const nh = ['Should deleting a user cascade to their orders?', { verify: { passes: 3, real: 1, refuted: 1 } }];
   const md = renderReport({ findings, criteria, tier: 'high', needsHuman: nh });
