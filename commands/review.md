@@ -18,25 +18,33 @@ Resolve base/head, fetch them, and **detach HEAD onto the latest pushed head** v
 **Stale-base check.** If setup reports `behindBase.count > 0`, the PR head is behind its base — the `base..head` diff is computed against a base the branch has not integrated, so the review can miss merge/semantic conflicts and shows base's new commits as phantom deletions. List `behindBase.commits` (sha + subject) and recommend the user rebase or merge `<base>` into the branch, then re-run; ask whether to proceed anyway. Advisory — do **not** hard-block; if the user proceeds, continue and note it in the delivered summary.
 
 ## 3. Deterministic inputs
-- `node "$LIB/plan.mjs" --base <baseRef>` (pass through `--tier`/`--dimensions`/`--exhaustive`) → the **plan** JSON. If `plan.tier == "trivial"`: do one quick inline correctness/comment pass, build a minimal payload (still including `plan` + `agentRuns:{}`) and skip to step 5.
-- `node "$LIB/gather.mjs" --base <baseRef>` → **bundle**; fetch linked tickets via the ClickUp/Atlassian **MCP** (never API tokens); record `trackerUsage` into the bundle. If a tracker is enabled but its MCP is absent, ask once to connect, else skip.
+**Token discipline — redirect every blob to a file under `$SCRATCH`; never read plan/bundle/diff into context.** Let `SCRATCH` be your scratchpad dir. The diff, plan and bundle are large (often 40–60 KB combined); reading them into context to "inspect" or to hand-assemble args is the main cost sink — don't. Only the small dynamic enrichment (a fetched ticket, the live PR object) ever touches context.
+
+- `node "$LIB/plan.mjs" --base <baseRef>` (pass through `--tier`/`--dimensions`/`--exhaustive`) **`> "$SCRATCH/plan.json"`**. To branch on the tier, read just one field: `TIER=$(node -e 'process.stdout.write(require("$SCRATCH/plan.json").tier)')` — do **not** read the whole file. If `TIER == trivial`: do one quick inline correctness/comment pass, build a minimal payload (still including `plan` + `agentRuns:{}`) and skip to step 5.
+- `node "$LIB/gather.mjs" --base <baseRef>` **`> "$SCRATCH/bundle.json"`**. Fetch linked tickets via the ClickUp/Atlassian **MCP** (never API tokens); if a tracker is enabled but its MCP is absent, ask once to connect, else skip. Write any dynamic enrichment (live PR object, fetched ticket, `trackerUsage`) as a small **`$SCRATCH/enrich.json`** — `build-args.mjs` merges it onto the bundle, so you never reshape the big bundle yourself.
+- `git diff <baseRef>..HEAD > "$SCRATCH/diff.txt"` — capture, never read into context.
 - If `learning.enabled`: `node "$LIB/memory.mjs" load <store>` → carry as context.
-- If `scan.deps`: `node "$LIB/scan.mjs"` → seed D15 findings + notes.
-- Routing (deterministic): `echo '<grouper-or-empty>' | node "$LIB/route.mjs" scrutiny` and `echo '{"mandatoryChecks":<plan.mandatoryChecks>}' | node "$LIB/route.mjs" checks` → `routing = { scrutiny, checks }`.
-- Capture the diff text and `plan.shards`.
+- If `scan.deps`: `node "$LIB/scan.mjs"` → seed D15 findings + notes (fold into `enrich.json`).
+- Routing (deterministic): `echo '<grouper-or-empty>' | node "$LIB/route.mjs" scrutiny > "$SCRATCH/scrutiny.json"` and `echo '{"mandatoryChecks":<plan.mandatoryChecks>}' | node "$LIB/route.mjs" checks > "$SCRATCH/checks.json"`.
 
 ## 4. Hand the fan-out to the Workflow
-Call the Workflow tool — it owns intent, per-aspect review (`dimensions × shards`), per-finding verification (the unsure findings), resolve, and synthesize. It assembles the report **payload** but no longer renders it (the sandbox can't write files; rendering moves to step 5):
+The Workflow owns intent, per-aspect review (`dimensions × shards`), per-finding verification (the unsure findings), resolve, and synthesize. It assembles the report **payload** but no longer renders it (the sandbox can't write files; rendering moves to step 5).
+
+**Assemble args deterministically — do not hand-build it.** Write the small `$SCRATCH/meta.json` `{ "flags": { "comment": <bool>, "gate": <bool>, "incremental": <bool>, "exhaustive": <bool> }, "startedAt": "<STARTED>", "prNumber": <n|null>, "checkout": <step-2 object|null> }`, then:
 
 ```
-Workflow({
-  scriptPath: "$LIB/review-workflow.mjs",
-  args: { plan, bundle, diff, shards: plan.shards, routing, flags: { comment, gate, incremental, exhaustive }, startedAt: STARTED, prNumber, checkout }
-})
+node "$LIB/build-args.mjs" --dir "$SCRATCH" > "$SCRATCH/args.json"
 ```
 
+`build-args.mjs` reads plan/bundle/diff/routing/meta/enrich from `$SCRATCH` and emits args in the exact shape the workflow destructures (`{ plan, bundle, diff, shards, routing, flags, startedAt, prNumber, checkout }`). The bulky diff is read from disk there and **never enters your context**. Then read `args.json` **once** and pass it as the `args` value:
+
+```
+Workflow({ scriptPath: "$LIB/review-workflow.mjs", args: <contents of args.json> })
+```
+
+- Do **not** reshape, subset, or rename any field, and do **not** read `review-workflow.mjs` to infer what it wants — `build-args.mjs` already produces the complete, correct contract.
 - `args` is delivered to the script as a **JSON string** — that is expected; the Workflow parses it. Pass it as an object here regardless.
-- It returns `{ payload, needsHuman, notes }`. If `scriptPath` does not resolve in this install, read the file and pass its contents via `script` instead.
+- It returns `{ payload, needsHuman, notes }`. Only if the Workflow tool itself errors that `scriptPath` is unresolvable, read the file and pass its contents via `script` instead — never open it otherwise.
 
 ## 5. Deliver
 - **Render the report** (also the destination for the trivial path of step 3): write the `payload` JSON to a temp file and run `report.mjs` from the **repo root**:

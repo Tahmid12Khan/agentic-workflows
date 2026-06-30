@@ -441,6 +441,7 @@ the source or filing a bug.
 | render + gate + memory record | `lib/report.mjs` | (CLI) |
 | inline PR comments via `gh` | `lib/comments.mjs` | (CLI) |
 | PR / comments / trackers → context | `lib/gather.mjs` | (CLI) |
+| pre-step outputs → Workflow `args` (keeps the diff out of agent context) | `lib/build-args.mjs` | `buildArgs`, `mergeEnrich` |
 | latest-code checkout / restore | `lib/checkout.mjs` | `fetchArgs`, `checkoutDetachArgs`, `restoreArgs`, `commitsBehindArgs` |
 | per-project learnings store | `lib/memory.mjs` | `findingKey`, load/record |
 | dependency CVE scan | `lib/scan.mjs` | (CLI) |

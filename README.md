@@ -205,6 +205,7 @@ lib/
   route.mjs       deterministic routing — extra-intent scrutiny, forced checks, aspect-budget ledger
   memory.mjs      per-project learnings store
   gather.mjs      PR / comments / trackers (keys) / rules → context bundle
+  build-args.mjs  pre-step outputs (plan/bundle/diff/routing) → Workflow args, file→file (diff never enters agent context)
   checkout.mjs    latest-code review: fetch remote base/head, detach HEAD onto head, restore after
   scan.mjs        npm/pip dependency CVE scan
   render.mjs      findings → review.md + review.html + verdict (pure)

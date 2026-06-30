@@ -3,6 +3,13 @@
 Release log for the **adversarial-code-review** plugin. Newest first. The forward-looking
 plan lives in [ROADMAP.md](ROADMAP.md). Source-of-truth version: `.claude-plugin/plugin.json`.
 
+## v0.11.0
+
+- **`lib/build-args.mjs`** (new module): deterministic pre-step assembler that reads plan/bundle/diff/routing/meta/enrich from `$SCRATCH` files and emits the exact args object `review-workflow.mjs` destructures — without routing any large blob through the main agent's context window. The diff (the dominant token cost) is read from disk here and never enters agent context. Exports `buildArgs` and `mergeEnrich` (shallow-merge for agent-fetched dynamic enrichment); CLI exits `2` on missing required inputs.
+- **`commands/review.md` — token-discipline refactor**: all large pre-step outputs (plan, bundle, diff, routing) are now redirected to `$SCRATCH` files; the agent reads no blob directly. Tier is extracted with a one-field `node -e` eval; dynamic MCP enrichment writes a small `enrich.json` that `build-args.mjs` merges. The Workflow `args` value is assembled via `node "$LIB/build-args.mjs" --dir "$SCRATCH"` and read back once — removing the hand-assembly that previously forced the 40–60 KB plan+bundle+diff into agent context on every review.
+- **Tests** (`tests/build-args.test.mjs`): 5 tests covering `mergeEnrich` null-safety, `buildArgs` key contract and safe defaults, CLI enrich merge, and CLI exit-2 on missing required input.
+- **Docs** (`README.md`, `docs/ARCHITECTURE.md`): `build-args.mjs` row added to the module tables.
+
 ## v0.10.0
 
 - **Unsharded D3 security pass** (`lib/review-orchestration.mjs`, `lib/review-workflow.mjs`): `expandAspects` gains an `{ unsharded }` option; D3/security now runs as a **single aspect over all changed files** instead of one aspect per shard. On a sharded diff, the old behaviour re-paid the full diff N times (D3 ignores the shard scope to preserve cross-file taint); collapsing to one aspect eliminates that multiplied cost while keeping full-diff taint analysis intact. Inlined copy in `review-workflow.mjs` kept in sync.
