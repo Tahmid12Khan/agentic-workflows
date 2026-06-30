@@ -1,6 +1,6 @@
 {
   "name": "adversarial-code-review",
-  "version": "0.9.0",
+  "version": "0.10.0",
   "description": "Advisory, criticality-aware code review. Understands a change's intent, scales review depth to risk, reports findings — and never edits your code.",
   "author": { "name": "Tahmid" },
   "license": "MIT",

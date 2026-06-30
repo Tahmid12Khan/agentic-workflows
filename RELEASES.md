@@ -3,6 +3,13 @@
 Release log for the **adversarial-code-review** plugin. Newest first. The forward-looking
 plan lives in [ROADMAP.md](ROADMAP.md). Source-of-truth version: `.claude-plugin/plugin.json`.
 
+## v0.10.0
+
+- **Unsharded D3 security pass** (`lib/review-orchestration.mjs`, `lib/review-workflow.mjs`): `expandAspects` gains an `{ unsharded }` option; D3/security now runs as a **single aspect over all changed files** instead of one aspect per shard. On a sharded diff, the old behaviour re-paid the full diff N times (D3 ignores the shard scope to preserve cross-file taint); collapsing to one aspect eliminates that multiplied cost while keeping full-diff taint analysis intact. Inlined copy in `review-workflow.mjs` kept in sync.
+- **Structured intent harvest** (`lib/review-workflow.mjs`): `intent-harvester` is now called with `HARVEST_SCHEMA`, forcing its output to a validated JSON object. A `harvesterBrief` (criteria + mismatches + scrutiny-flagged groups only) is derived from the structured result and passed to dimension reviewers and the completeness-critic; the bulky prose fields (`statedIntent`/`derivedIntent`/`expectedTests`/`outOfScope`) reach only the deep consumers (business-logic, synthesizer). Previously the raw free-form text was broadcast verbatim into every reviewer prompt.
+- **Reviewer prompt-cache ordering** (`lib/review-workflow.mjs`): the reviewer prompt now leads with the shared, byte-identical blocks (intent brief + project rules) and trails with the per-aspect payload (diff, then dimension + file list). Shared prefix is now eligible for cache reuse across every aspect of the same reviewer agent — same cache trick already used by the intent and verify passes.
+- **Test coverage** (`tests/review-orchestration.test.mjs`): new test asserting `expandAspects` collapses unsharded dimensions to one all-files aspect while leaving other dimensions sharded normally.
+
 ## v0.9.0
 
 - **`intent-grouper` folded into `intent-harvester`** (`agents/intent-harvester.md`, `lib/review-workflow.mjs`, `lib/render.mjs`): the former `intent-grouper` agent is eliminated; `intent-harvester` now produces both the acceptance-criteria model (stated vs derived intent, mismatches) and the primary-vs-extra intent grouping in a single pass. Agent count drops from 22 to 21. The `groups` and `extraIntents` fields are new in the harvester's JSON output; downstream review agents consume them directly.

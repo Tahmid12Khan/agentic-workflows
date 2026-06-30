@@ -11,6 +11,17 @@ test('expandAspects = dimensions × shards', () => {
   assert.deepEqual(aspects[0], { dim: 'D2', agent: 'correctness-reviewer', shardId: 'A', files: ['a.ts'] });
 });
 
+test('expandAspects collapses unsharded dims to one all-files aspect', () => {
+  const shards = [{ label: 'A', files: ['a.ts'] }, { label: 'B', files: ['b.ts'] }];
+  const aspects = expandAspects({ D2: 'correctness-reviewer', D3: 'vuln-reviewer' }, shards, { unsharded: ['D3'] });
+  // D2 stays sharded (×2); D3 collapses to a single aspect over the union of all files
+  assert.equal(aspects.length, 3);
+  const d3 = aspects.filter((a) => a.dim === 'D3');
+  assert.equal(d3.length, 1);
+  assert.deepEqual(d3[0], { dim: 'D3', agent: 'vuln-reviewer', shardId: 'all', files: ['a.ts', 'b.ts'] });
+  assert.equal(aspects.filter((a) => a.dim === 'D2').length, 2);
+});
+
 test('findingKey is line-sensitive and title-normalized', () => {
   assert.equal(findingKey({ file: 'x.ts', line: 10, title: '  SQL Injection ' }), 'x.ts:10:sql injection');
   assert.notEqual(
