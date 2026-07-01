@@ -3,6 +3,12 @@
 Release log for the **adversarial-code-review** plugin. Newest first. The forward-looking
 plan lives in [ROADMAP.md](ROADMAP.md). Source-of-truth version: `.claude-plugin/plugin.json`.
 
+## v0.12.0
+
+- **One-click GitHub suggestion blocks** (`lib/comments.mjs`, `lib/review-workflow.mjs`, all `agents/*-reviewer.md`): findings can now carry `fixCode` (an exact, letter-for-letter replacement) and `endLine` (for a fix spanning several contiguous original lines). `--comment` renders these as a real ```` ```suggestion ```` block GitHub can apply in one click — single-line at `line`, or multi-line via `start_line`/`start_side` — instead of a prose-only "Suggested fix". Falls back to the one-line prose `fix` when a reviewer isn't letter-for-letter confident. New exports `commentLocation` and `buildCommentArgs`; dedup now keys off the comment's visible anchor line (`endLine` when set).
+- **Tests** (`tests/v2.test.mjs`): 4 tests added covering the suggestion-block render, `commentLocation`, `buildCommentArgs`, and multi-line dedup.
+- **Docs** (`README.md`, `docs/ARCHITECTURE.md`): `--comment` description updated to mention one-click suggestion blocks.
+
 ## v0.11.0
 
 - **`lib/build-args.mjs`** (new module): deterministic pre-step assembler that reads plan/bundle/diff/routing/meta/enrich from `$SCRATCH` files and emits the exact args object `review-workflow.mjs` destructures — without routing any large blob through the main agent's context window. The diff (the dominant token cost) is read from disk here and never enters agent context. Exports `buildArgs` and `mergeEnrich` (shallow-merge for agent-fetched dynamic enrichment); CLI exits `2` on missing required inputs.

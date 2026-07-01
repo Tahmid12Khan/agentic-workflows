@@ -6,7 +6,7 @@ import { applyLearnings, dedupAgainstPrevious, recordRun, findingKey, EMPTY } fr
 import { renderHtml } from '../lib/render.mjs';
 import { parseNpmAudit, parsePipAudit } from '../lib/scan.mjs';
 import { extractIssueKeys } from '../lib/gather.mjs';
-import { buildCommentBody, dedupComments } from '../lib/comments.mjs';
+import { buildCommentBody, buildCommentArgs, commentLocation, dedupComments } from '../lib/comments.mjs';
 import { extraScrutinyTargets, forcedChecks, newLedger, canSpawn, recordSpawn } from '../lib/route.mjs';
 import { computeSignals } from '../lib/signals.mjs';
 import { planReview, exhaustivePlan, pickModels, DIMENSION_AGENTS } from '../lib/triage.mjs';
@@ -166,9 +166,28 @@ test('buildCommentBody includes problem, fix and advisory footer', () => {
   assert.match(body, /Suggested fix/);
   assert.match(body, /advisory/);
 });
+test('buildCommentBody renders a GitHub suggestion block when fixCode is set', () => {
+  const body = buildCommentBody({ severity: 'important', dimension: 'D2', title: 'off-by-one', evidence: 'i <= len', fix: 'use <', fixCode: 'if (i < len) {', confidence: 88 });
+  assert.match(body, /```suggestion\nif \(i < len\) \{\n```/);
+  assert.doesNotMatch(body, /Suggested fix:/);
+});
 test('dedupComments skips already-commented lines', () => {
   const out = dedupComments([{ file: 'a.ts', line: 5, title: 'x' }, { file: 'b.ts', line: 1, title: 'y' }], [{ path: 'a.ts', line: 5, body: 'old' }]);
   assert.deepEqual(out.map(f => f.file), ['b.ts']);
+});
+test('commentLocation is single-line unless endLine exceeds line', () => {
+  assert.deepEqual(commentLocation({ line: 5 }), { line: 5 });
+  assert.deepEqual(commentLocation({ line: 5, endLine: 5 }), { line: 5 });
+  assert.deepEqual(commentLocation({ line: 5, endLine: 3 }), { line: 5 });
+  assert.deepEqual(commentLocation({ line: 5, endLine: 8 }), { line: 8, start_line: 5, start_side: 'RIGHT' });
+});
+test('buildCommentArgs anchors a multi-line finding with start_line/start_side', () => {
+  const args = buildCommentArgs({ file: 'a.ts', line: 10, endLine: 13, severity: 'important', title: 'x', fixCode: 'a\nb' }, { head: 'sha1', pr: 7 });
+  assert.deepEqual(args.slice(args.indexOf('-F')), ['-F', 'line=13', '-f', 'side=RIGHT', '-F', 'start_line=10', '-f', 'start_side=RIGHT']);
+});
+test('dedupComments keys a multi-line finding off its last line (endLine)', () => {
+  const out = dedupComments([{ file: 'a.ts', line: 10, endLine: 13, title: 'x' }], [{ path: 'a.ts', line: 13, body: 'old' }]);
+  assert.equal(out.length, 0);
 });
 
 // --- triage wiring for new dimensions ---

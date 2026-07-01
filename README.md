@@ -75,7 +75,7 @@ everything from the interactive `/plugin` menu):
 |------|--------|
 | `--base <ref>` | Compare against `<ref>` instead of the auto-detected merge-base. |
 | `--gate` | Exit non-zero on a `BLOCK` verdict (git hooks / CI). |
-| `--comment` | Post confidence ≥ 80 findings as inline PR comments (needs `gh`). |
+| `--comment` | Post confidence ≥ 80 findings as inline PR comments — a one-click GitHub `suggestion` block when a reviewer gave an exact fix, else a one-line fix description (needs `gh`). |
 | `--tier <t>` | Force a tier (`trivial`…`critical`). |
 | `--dimensions D2,D3` | Restrict to specific dimensions. |
 | `--incremental` | Only re-spend effort on code new since the last review. |

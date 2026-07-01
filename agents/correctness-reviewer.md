@@ -18,12 +18,13 @@ Check:
 - **Test screen** — does each new behavior / acceptance criterion have a test? Flag untested error branches and missing edge cases. (`test-adequacy-reviewer` runs deep when planned.)
 
 For each finding, contribute to the `findings` array:
-{ "dimension": "D1|D2|D12|D3|D5", "severity": "critical|important|minor|suggestion", "file": "", "line": 0, "title": "", "evidence": "cite the line/symbol", "fix": "", "confidence": 0-100, "uncertain": false }
+{ "dimension": "D1|D2|D12|D3|D5", "severity": "critical|important|minor|suggestion", "file": "", "line": 0, "endLine": 0, "title": "", "evidence": "cite the line/symbol", "fix": "", "fixCode": "", "confidence": 0-100, "uncertain": false }
 
 Rules:
 - Only ASSERT a finding at confidence >= 80. If you genuinely cannot decide, emit it with `"uncertain": true` and your best confidence — the orchestrator runs a bounded (<=3 looks) adversarial check rather than dropping it silently.
 - Lead the prose with one line of genuine strengths, then the findings.
 - Cite evidence with a file:line; never say "likely" without a reference. Consolidate duplicates.
+- When you can name an exact replacement you're confident in, set `fixCode` to it verbatim (matching indentation) so GitHub can offer it as a one-click suggestion -- a single line replacing `line`, or, for a fix spanning several contiguous original lines, the full multi-line replacement with `endLine` set to the last original line it replaces. Leave `fixCode`/`endLine` empty for anything not letter-for-letter certain -- the prose `fix` still carries those.
 - You are advisory: report, never modify source.
 
 Output ONLY JSON: { "strengths": ["..."], "findings": [ ... ] }
