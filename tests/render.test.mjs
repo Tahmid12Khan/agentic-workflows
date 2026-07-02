@@ -179,17 +179,52 @@ test('reports name the head/base the review was checked out against', () => {
   assert.match(html, /Reviewed origin\/feature vs origin\/main @ abc12345/);
 });
 
-test('usage panel renders top-left when usage is present, omitted otherwise', () => {
+test('usage panel renders in the info row below the header, omitted otherwise', () => {
   const usage = { inputTokens: 23895, outputTokens: 739, cacheReadTokens: 20975, cacheWriteTokens: 6148, costUsd: 0.1234, messages: 5 };
   const html = renderHtml({ findings, criteria, tier: 'standard', usage });
   assert.match(html, /class="usage"/);
   assert.match(html, /23,895/);          // thousands-separated token count
   assert.match(html, /cache read/);
   assert.match(html, /\$0\.1234/);       // sub-$1 cost shown to 4 dp
-  // panel sits before the header row (top-left)
-  assert.ok(html.indexOf('class="usage"') < html.indexOf('class="top"'));
+  // panel now sits in the info row, below the header + meta line (not floated top-left)
+  assert.match(html, /class="info-row"/);
+  assert.ok(html.indexOf('class="usage"') > html.indexOf('class="top"'));
   // no usage → no panel, report unchanged
   assert.doesNotMatch(renderHtml({ findings, criteria, tier: 'standard' }), /class="usage"/);
+});
+
+test('PR-info panel shows base/target branch, sha, date, subject; md mirrors it', () => {
+  const checkout = {
+    baseRef: 'origin/main', headRef: 'origin/feature', sha: 'abc12345def67890',
+    baseCommit: { branch: 'main', ref: 'origin/main', sha: 'ba5e0000cafef00d', subject: 'fix: base thing', date: '2026-07-01', origin: null },
+    headCommit: { branch: 'feature/zip-tax', ref: 'origin/feature', sha: 'abc12345def67890', subject: 'feat: zip-code tax', date: '2026-07-02', origin: null },
+  };
+  const html = renderHtml({ findings, criteria, tier: 'standard', checkout });
+  assert.match(html, /class="prinfo"/);
+  assert.match(html, /feature\/zip-tax/);         // target branch
+  assert.match(html, />base</);                   // base label
+  assert.match(html, /abc12345/);                 // target short sha
+  assert.match(html, /ba5e0000/);                 // base short sha
+  assert.match(html, /2026-07-02/);               // target commit date
+  assert.match(html, /feat: zip-code tax/);       // target subject
+  // markdown records the same facts after the meta line
+  const md = renderReport({ findings, criteria, tier: 'standard', checkout });
+  assert.match(md, /\*\*base\*\* `main` `ba5e0000` \(2026-07-01\) — fix: base thing/);
+  assert.match(md, /\*\*target\*\* `feature\/zip-tax` `abc12345` \(2026-07-02\) — feat: zip-code tax/);
+});
+
+test('PR-info shows an origin line only when the reviewed ref diverged from origin', () => {
+  const diverged = {
+    baseCommit: { branch: 'main', ref: 'main', sha: 'aaaa1111bbbb', subject: 'local base', date: '2026-06-30',
+      origin: { sha: 'ffff9999eeee', subject: 'newer on origin', date: '2026-07-02' } },
+    headCommit: { branch: 'feature', ref: 'origin/feature', sha: 'cccc2222dddd', subject: 'the change', date: '2026-07-03', origin: null },
+  };
+  const html = renderHtml({ findings, criteria, tier: 'standard', checkout: diverged });
+  assert.match(html, /class="pr-origin"/);
+  assert.match(html, /origin ffff9999/);
+  // the matched (target) side has no origin line — in general they are the same
+  assert.equal((html.match(/class="pr-origin"/g) || []).length, 1);
+  assert.match(renderReport({ findings, criteria, tier: 'standard', checkout: diverged }), /origin `ffff9999`/);
 });
 
 test('needs-input items render even as bare strings or sparse objects (no empty cards)', () => {

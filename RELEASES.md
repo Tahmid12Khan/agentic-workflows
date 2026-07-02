@@ -3,6 +3,13 @@
 Release log for the **adversarial-code-review** plugin. Newest first. The forward-looking
 plan lives in [ROADMAP.md](ROADMAP.md). Source-of-truth version: `.claude-plugin/plugin.json`.
 
+## v0.13.0
+
+- **PR-info panel in the HTML report** (`lib/render.mjs`): the header now shows a two-column info row — token usage/cost on the left (unchanged), a new base/target commit panel on the right showing each side's branch, short sha, commit date, and subject, plus an `origin` line only when the reviewed ref diverged from `<remote>/<branch>`. The usage grid itself is now 2-wide (input | cache read on top, output | cache write below) instead of a single column. The markdown report gains the same base/target facts as header bullets.
+- **`checkout.mjs` returns commit facts** (`lib/checkout.mjs`): new exports `commitInfoArgs`, `parseCommitInfo`, `commitSide` — `setup` now resolves `baseCommit`/`headCommit` (sha, subject, date, and an `origin` counterpart carried only when it diverges from the reviewed ref) alongside the existing `baseRef`/`headRef`/`sha`.
+- **Docs** (`docs/ARCHITECTURE.md`): checkout return-value and report sections updated to describe the new commit facts and the info-row layout.
+- **Tests** (`tests/checkout.test.mjs`, `tests/render.test.mjs`): coverage added for `commitInfoArgs`/`parseCommitInfo`/`commitSide` and for the report's commit-facts rendering (markdown bullets + HTML panel, including the divergent-origin case).
+
 ## v0.12.0
 
 - **One-click GitHub suggestion blocks** (`lib/comments.mjs`, `lib/review-workflow.mjs`, all `agents/*-reviewer.md`): findings can now carry `fixCode` (an exact, letter-for-letter replacement) and `endLine` (for a fix spanning several contiguous original lines). `--comment` renders these as a real ```` ```suggestion ```` block GitHub can apply in one click — single-line at `line`, or multi-line via `start_line`/`start_side` — instead of a prose-only "Suggested fix". Falls back to the one-line prose `fix` when a reviewer isn't letter-for-letter confident. New exports `commentLocation` and `buildCommentArgs`; dedup now keys off the comment's visible anchor line (`endLine` when set).

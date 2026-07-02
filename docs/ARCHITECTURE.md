@@ -105,7 +105,7 @@ see the real target code, not whatever branch you happened to have checked out.
 1. **Fetch** the PR's base + head from the remote (`git fetch --no-tags <remote> <base> <head>`).
 2. **Record** the current ref to restore afterward — the branch name, or (already detached) the sha.
 3. **Detach** HEAD onto `<remote>/<head>` (`git checkout --detach <remote>/<head>`). If the working tree has changes git would overwrite, it prints a **stash-and-rerun** message and exits non-zero — it **never stashes for you** (could silently lose work, and the plugin is advisory).
-4. **Return** the resolved `baseRef`/`headRef`, the head `sha`, the `originalRef` to restore, the diff `range` (`baseRef..HEAD`), and `behindBase` — the commits the base has that the head has **not** integrated.
+4. **Return** the resolved `baseRef`/`headRef`, the head `sha`, the `originalRef` to restore, the diff `range` (`baseRef..HEAD`), `behindBase` (the commits the base has that the head has **not** integrated), and `baseCommit`/`headCommit` — each side's branch name, commit sha, subject, and date, with an `origin` block carried only when the reviewed ref diverged from `<remote>/<branch>` (normally they match, so it's dropped).
 
 Because the diff is two-dot `git diff <base>..HEAD`, moving HEAD onto the latest head is exactly
 what makes the whole downstream pipeline (`plan.mjs`, `gather.mjs`, the reviewers) operate on the
@@ -113,7 +113,9 @@ most recent pushed code — no separate working directory is involved.
 
 When `behindBase.count > 0` the head is behind its base: the two-dot `base..head` diff is then computed against a base the branch hasn't merged, so it can miss real conflicts and renders base's newer commits as phantom deletions. `/review` lists those commits and asks the user to rebase or merge the base in before re-running. It is **advisory** — the user can proceed anyway; the review never hard-blocks on this.
 
-The **head/base reviewed is recorded in the report** (under *Context used*). After the report is
+The **base/target commits reviewed are recorded in the report** — the HTML report shows them in a
+two-column info row under the header (usage/cost left, base/target branch + sha + date + subject
+right), and the terse head-vs-base ref line also appears under *Context used*. After the report is
 written, `/review` runs `checkout.mjs restore --ref <originalRef>` to put the user back on their
 original branch — and warns if the restore fails (so they aren't stranded on a detached HEAD).
 
