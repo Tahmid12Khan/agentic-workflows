@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { expandAspects, findingKey, newCaps, canSpawn, recordSpawn, buildReportPayload, pluginAgent, PLUGIN_NS, inDiffScope, partitionByScope, intentBrief, screenPacket, selectGaps, CONSEQUENCE_DIRECTIVE, historyBlock, testSignalBlock, reviewerAddendum } from '../lib/review-orchestration.mjs';
+import { expandAspects, findingKey, newCaps, canSpawn, recordSpawn, buildReportPayload, pluginAgent, PLUGIN_NS, inDiffScope, partitionByScope, intentBrief, screenPacket, selectGaps, CONSEQUENCE_DIRECTIVE, historyBlock, testSignalBlock, reviewerAddendum, DOUBLE_RUN_AGENTS, isDoubleRunAgent, dedupeFindings } from '../lib/review-orchestration.mjs';
 
 test('expandAspects = dimensions × shards', () => {
   const aspects = expandAspects(
@@ -288,6 +288,57 @@ test('reviewerAddendum routes each extra to the right reviewer, others get nothi
   assert.doesNotMatch(d5, /PRIOR BUG HISTORY/);       // history rides correctness, not D5
   assert.equal(reviewerAddendum('vuln-reviewer', { history, testSignal }), ''); // everyone else: nothing
   assert.equal(reviewerAddendum('correctness-reviewer', {}), '\n' + CONSEQUENCE_DIRECTIVE); // directive always, history only when present
+});
+
+// --- S7.1: exhaustive double-run union/dedupe ---
+test('isDoubleRunAgent flags only the correctness + vuln reviewers', () => {
+  assert.equal(isDoubleRunAgent('correctness-reviewer'), true);
+  assert.equal(isDoubleRunAgent('vuln-reviewer'), true);
+  assert.equal(isDoubleRunAgent('test-adequacy-reviewer'), false);
+  assert.equal(isDoubleRunAgent('finding-verifier'), false);
+  assert.equal(isDoubleRunAgent(undefined), false);
+  assert.deepEqual([...DOUBLE_RUN_AGENTS].sort(), ['correctness-reviewer', 'vuln-reviewer']);
+});
+
+test('dedupeFindings unions two passes by findingKey, first occurrence wins (deterministic)', () => {
+  const pass1 = [
+    { file: 'a.js', line: 3, title: 'SQL injection', confidence: 90 },
+    { file: 'b.js', line: 7, title: 'null deref' },
+  ];
+  const pass2 = [
+    { file: 'a.js', line: 3, title: '  sql injection ', confidence: 50 }, // same key (line-sensitive + title-normalized)
+    { file: 'c.js', line: 1, title: 'missing check' },                    // unique to pass 2
+  ];
+  const merged = dedupeFindings([...pass1, ...pass2]);
+  assert.equal(merged.length, 3);                       // 4 findings, one duplicate collapsed
+  const dup = merged.find((f) => f.file === 'a.js');
+  assert.equal(dup.confidence, 90);                     // first occurrence (pass 1) wins the tie
+  assert.ok(merged.some((f) => f.file === 'b.js'));     // union keeps pass-1-only
+  assert.ok(merged.some((f) => f.file === 'c.js'));     // union keeps pass-2-only
+  // a same-title finding at a DIFFERENT line is distinct (line-sensitive key), never merged
+  assert.equal(dedupeFindings([{ file: 'x', line: 1, title: 't' }, { file: 'x', line: 2, title: 't' }]).length, 2);
+});
+
+test('dedupeFindings is a no-op on an empty/single/absent list', () => {
+  assert.deepEqual(dedupeFindings([]), []);
+  assert.deepEqual(dedupeFindings(), []);
+  const one = [{ file: 'x', line: 1, title: 't' }];
+  assert.deepEqual(dedupeFindings(one), one);
+});
+
+// --- S7: inlined copies + double-run wiring stay in sync with the canonical helpers ---
+test('inlined S7 helpers + double-run wiring stay in sync with lib/review-orchestration.mjs', () => {
+  const src = readFileSync(new URL('../lib/review-workflow.mjs', import.meta.url), 'utf8');
+  assert.match(src, /const DOUBLE_RUN_AGENTS = new Set\(\['correctness-reviewer', 'vuln-reviewer'\]\)/, 'DOUBLE_RUN_AGENTS must be inlined');
+  assert.match(src, /const isDoubleRunAgent =/, 'isDoubleRunAgent must be inlined');
+  assert.match(src, /function dedupeFindings\(/, 'dedupeFindings must be inlined');
+  // stage 1 gates the double-run on the exhaustive discovery flag and dedupes BEFORE Verify
+  assert.match(src, /plan\.discovery\?\.doubleRun/, 'the double-run must gate on discovery.doubleRun');
+  assert.match(src, /doubleRun && isDoubleRunAgent\(a\.agent\)/, 'only correctness + vuln reviewers double-run');
+  assert.match(src, /dedupeFindings\(passes\.flatMap/, 'the two passes must be unioned + deduped before Verify');
+  // S7.2: the retired machinery must not resurface as a dispatched pass
+  assert.doesNotMatch(src, /generativeVerify/, 'generativeVerify must be gone');
+  assert.doesNotMatch(src, /loopUntilDry/, 'loopUntilDry must be gone');
 });
 
 // --- S6: inlined copies stay in sync with the canonical helpers ---

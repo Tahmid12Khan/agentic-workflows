@@ -15,7 +15,7 @@ A Claude Code **plugin** for advisory, **criticality-aware** code review. It und
 - **Reviews every dimension** — 17 dimensions (correctness, security, tests, concurrency, perf, DB/migrations, API-compat, types, deps/CVE, observability, a11y, …), each a dedicated bundled agent, dispatched only when the change warrants it.
 - **Runs real tools** — `npm audit` / `pip-audit` feed the dependency dimension.
 - **Bounded adversarial verify on non-trivial tiers** — on every tier where `plan.runVerify` is true, the **unsure** findings (low-confidence, flagged uncertain, or high-severity on a risk path — via `selectForVerification`) each get their own verification agent; confident, non-risk findings are trusted and ship at the ≥80 gate. Each verifier attacks from a **dimension-appropriate lens** (security→taint, concurrency→interleaving, …) and **escalates cheap→strong**: a first refute on `sonnet`, escalating to `opus` when the cheap verdict is uncertain or refutes a hot finding (`critical`/`important`/`high`), with **critical findings going straight to `opus`** — and on escalation the strong verdict is authoritative (the cheap one is discarded). Confirmed → kept; refuted → dropped; a **hot finding is not dropped on a single refuter** (lone refutation → needs-human when a 2nd look is affordable); a still-split result is surfaced to you, never silently dropped. Cap: **≤ 3 looks and ≤ 3 subagents per aspect**, enforced in code. Models are configurable (`verify.model_first` / `verify.model_escalate` / `verify.escalate_direct_severity`). (Trivial/low tiers skip the verify pass — the cost trade-off.)
-- **Exhaustive mode** (`--exhaustive`, auto at `critical`) — opt-in ultrareview-parity passes that trade tokens for fewer misses: a **completeness critic** (what dimension/criterion/taint did we miss?), **generative verify** (a verifier may surface an adjacent finding, not just refute), a **taint/data-flow** verifier for security findings, and **loop-until-dry** re-sweeps. Off by default so normal reviews stay cheap.
+- **Exhaustive mode** (`--exhaustive`, auto at `critical`) — opt-in ultrareview-parity passes that trade tokens for fewer misses: a **completeness critic** (what dimension/criterion did we miss?), a **taint/data-flow** verifier for security findings, and a **double run** of the correctness + vuln reviewers — two independent passes unioned + deduped by finding before verify, so a sample-to-sample miss is caught (real decorrelation, alongside the verifier's cheap→strong escalation). Off by default so normal reviews stay cheap.
 - **Cheap false-negative safety net** — near-zero-cost guards against silent misses: a **high-tier completeness screen** (haiku, coverage-metadata only) flags dimension/criterion gaps and re-dispatches 1–2 targeted reviewers; a **cross-file consequence check** asks the correctness reviewer whether each in-repo caller of a changed export still holds; a deterministic **bug-history prior** (recent `fix`/`revert` commits touching the changed files, zero model cost) tells intent + correctness which files deserve extra scrutiny; and an opt-in **test-execution signal** (`--run-tests`) feeds real pass/fail to the test reviewer.
 - **Scales to large diffs** — shards a big change into coherent review units; no nested-agent sprawl.
 - **Remembers** — per-project memory suppresses accepted false-positives, tags recurring findings, and stores open questions so it doesn't re-ask.
@@ -80,7 +80,7 @@ everything from the interactive `/plugin` menu):
 | `--tier <t>` | Force a tier (`trivial`…`critical`). |
 | `--dimensions D2,D3` | Restrict to specific dimensions. |
 | `--incremental` | Only re-spend effort on code new since the last review. |
-| `--exhaustive` | Force the Tier C ultrareview-parity passes (completeness critic, taint, generative verify, loop-until-dry) at any tier. Costs more tokens; auto-on at `critical`. |
+| `--exhaustive` | Force the Tier C ultrareview-parity passes (completeness critic, D3 taint verifier, and a double run of the correctness + vuln reviewers) at any tier. Costs more tokens; auto-on at `critical`. |
 | `--run-tests` | Run the configured `tests.command` (never guessed) after checkout and feed pass/fail + failing test **names** to the test-adequacy reviewer and the report header. **Executes repo code — never use on an untrusted PR.** Off by default. |
 | `--no-checkout` | Review the local working tree in place instead of detaching onto the remote's latest base/head (use for **uncommitted** local changes). |
 
@@ -240,6 +240,16 @@ fixtures/   sample diffs + expected tiers
 - **Doubt is surfaced, not hidden** — unresolved findings (and lone refutations of high-severity findings) go to a "needs human" list.
 - **Changed lines only** — pre-existing issues outside the diff are not flagged. *(Agent-instructed; no taint-following across the diff boundary.)*
 - **Bounded cost** — model tiering + ≤ 3 looks/subagents per aspect.
+
+## Limits
+
+What this plugin deliberately does **not** do — so you know where to keep other gates:
+
+- **No dynamic analysis** beyond the opt-in `--run-tests` pass (it runs the configured `tests.command`, nothing else). No fuzzing, profiling, coverage measurement, or sanitizers.
+- **No design/architecture judgment beyond the diff.** Reviewers reason about the changed lines plus the context pack (enclosing definitions, imports, in-repo callers); they do not evaluate whole-system design, module boundaries, or whether the feature should exist.
+- **No cross-repo contract analysis.** It cannot see consumers in other repositories. For the multi-consumer / breaking-change problem, keep dedicated CI contract gates — e.g. [oasdiff](https://github.com/oasdiff/oasdiff) or [buf](https://buf.build) for API/proto compatibility, [Pact](https://pact.io) for consumer-driven contracts.
+- **No debate between reviewers.** Each dimension reviewer runs in isolation; verification is adversarial refutation of a single finding, not a multi-agent argument. Exhaustive mode adds a second independent reviewer pass (double run) and cheap→strong verifier escalation, not a debate.
+- **Advisory only.** It never edits, commits, or applies a fix — every finding's `fix`/`fixCode` is rendered as a suggestion for you (or a one-click GitHub `suggestion` block) to accept.
 
 ## Development
 

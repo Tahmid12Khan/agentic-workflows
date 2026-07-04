@@ -339,7 +339,7 @@ still split, or that survived but stayed below the floor) — *never silently dr
 By default a non-exhaustive review runs its reviewer fan-out **once** and ships. Exhaustive
 mode trades extra tokens for fewer misses. It turns on with `--exhaustive`, or
 automatically at the `critical` tier (`exhaustive.on_critical`, default true).
-`exhaustivePlan()` flips four passes on together:
+`exhaustivePlan()` flips three passes on together:
 
 ```mermaid
 sequenceDiagram
@@ -348,27 +348,30 @@ sequenceDiagram
   participant S as Synthesize
   participant CC as completeness-critic
 
-  Note over R: loop-until-dry — re-sweep finders<br/>up to max_discovery_rounds, stop on a dry round
-  R->>R: round 1 … N (dedup by file:line:title)
-  R->>V: all findings
-  Note over V: generative verify — a verifier may surface<br/>up to 2 adjacent findings (one extra round only)
-  Note over V: taint pass — D3 findings routed to taint-verifier
+  Note over R: double run — correctness + vuln reviewers<br/>run twice; union + dedupe by file:line:title
+  R->>V: unioned findings
+  Note over V: taint pass — D3 findings → taint-verifier<br/>+ cheap→strong model_escalate (the real levers)
   V->>S: kept findings
-  S->>CC: coverage matrix + kept + skipped dims + risk paths
+  S->>CC: acceptance criteria + kept findings + dims run + risk paths
   Note over CC: false-negative guard — what did we MISS?<br/>(max 6 bounded gaps, each a targeted re-dispatch)
   CC->>V: new findings from the gaps
   V->>S: re-synthesize with the new findings
 ```
 
-The four passes:
+The three passes:
 
-- **loop-until-dry** — repeat the fan-out until a round adds nothing new (capped at `max_discovery_rounds`). A single sweep misses the tail.
-- **generative verify** — on the first verify pass, a verifier may emit up to 2 *adjacent* findings, not just refute. Bounded to exactly one extra round (the second pass forces `generative:false`, so no recursion).
+- **double run (S7.1)** — the correctness + vuln reviewers (the highest cost-of-miss dimensions) each run **twice**, as two independent passes; their findings are unioned and deduped by `file:line:title` (`dedupeFindings`, deterministic) **before** Verify, so a finding both passes agree on is verified once. Two independent samples catch a miss a single sample would drop. This is a **real** decorrelation lever; with the verifier's cheap→strong `model_escalate` it is the only one that survived honest scoping — v1's "withhold findings-so-far from later reviewers" is already the default (reviewers never see prior findings) and "shard in reverse order" is inert (D3 is unsharded, small diffs are single-shard). It is intentionally uncached and intentionally spends more — an exhaustive-only trade.
 - **taint pass** — D3 security findings route to the data-flow `taint-verifier` instead of the generic verifier.
-- **completeness-critic** — runs *after* synthesis, aimed at what the review **missed** (an unrun dimension, an uncovered criterion, an untraced taint, an unverified claim). Returns ≤ 6 bounded gaps, each a concrete re-dispatch. It does **not** loop.
+- **completeness-critic** — runs *after* synthesis, aimed at what the review **missed** (an unrun dimension, an uncovered criterion). Returns ≤ 6 bounded gaps, each a concrete re-dispatch. It does **not** loop.
 
 Every re-dispatch — in every pass — still clears the same spawn ledger, so the per-aspect
-cap (≤ 3) holds across rounds.
+cap (≤ 3) holds.
+
+> **Retired (S7.2).** Earlier docs described *generative verify* (a verifier emitting adjacent
+> findings) and *loop-until-dry* (`max_discovery_rounds` re-sweeps until a dry round). Neither was
+> ever wired — the verify prompt is refute-only and the fan-out runs once — so the dead
+> `generativeVerify` / `loopUntilDry` / `maxRounds` fields and the no-op `max_discovery_rounds`
+> config key were removed rather than left documented as live.
 
 ---
 
@@ -434,7 +437,7 @@ optional and falls back to a sensible default.
 | `learning` | per-project memory: `enabled`, `store` path. |
 | `notify` | `ask_on_unresolved` — surface open questions instead of assuming. |
 | `trackers` | ClickUp/Jira key patterns. **Tickets are fetched via MCP by the orchestrator — no API tokens stored or used.** |
-| `exhaustive` | Tier C passes: `on_critical`, `max_discovery_rounds`. |
+| `exhaustive` | Tier C passes: `on_critical` (auto-run the exhaustive passes at the critical tier). |
 | `usage` | the cost panel in `review.html` + the Cost section in `review.md`: `enabled` toggle, `pricing` per-model-family overrides (USD per MTok). |
 | `diff_scope` | `slack` (default 3): line tolerance around a hunk before a finding is demoted to the advisory out-of-scope section (excluded from the verdict/gate/`--comment`). |
 

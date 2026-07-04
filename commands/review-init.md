@@ -31,7 +31,7 @@ Run `node "${CLAUDE_PLUGIN_ROOT:-$HOME/.claude/adversarial-code-review}/lib/pref
   "gate": { "block_on": ["critical"], "warn_on": ["high"] },
   "verify": { "max_passes_per_aspect": 3, "max_subagents_per_aspect": 3, "reverify_below": 80, "report_confidence": 80, "escalate_uncertain": true },
   "escalation": { "max_subagents_per_aspect": 3 },
-  "exhaustive": { "on_critical": true, "max_discovery_rounds": 2 },
+  "exhaustive": { "on_critical": true },
   "large_diff": { "shard_threshold_loc": 600, "max_shards": 4 },
   "scan": { "deps": true, "tests": false, "lint": false },
   "checkout": { "enabled": true, "remote": "origin" },
@@ -42,7 +42,7 @@ Run `node "${CLAUDE_PLUGIN_ROOT:-$HOME/.claude/adversarial-code-review}/lib/pref
 
 - Keep only `project_rules` entries for files that exist.
 - The **bounded-verification** caps (`verify`, `escalation`) keep cost predictable: at most 3 looks and 3 subagents per aspect. Leave them unless the user wants tighter/looser bounds. Spend is **tier-aware**: reviewer models scale by tier (opus only on the hardest dimensions at high/critical — override with `models`), the simplification pass (D16) is **opt-in below the high tier** (add `"always_dims": ["D16"]` to run it everywhere), and the verify confidence bar can be tuned per tier with `verify.by_tier.<tier>` (defaults 80/80 on every tier — `reverify_below` is clamped up to `report_confidence` so it never opens a dead band).
-- **`exhaustive`** turns on the deeper ultrareview-parity passes (completeness critic, taint, generative verify, loop-until-dry). They cost more tokens, so by default they run only at the `critical` tier (`on_critical: true`) or when `/review --exhaustive` is passed. Set `on_critical: false` to make them opt-in only.
+- **`exhaustive`** turns on the deeper ultrareview-parity passes (completeness critic, D3 taint verifier, and a double run of the correctness + vuln reviewers unioned by finding). They cost more tokens, so by default they run only at the `critical` tier (`on_critical: true`) or when `/review --exhaustive` is passed. Set `on_critical: false` to make them opt-in only.
 - **Trackers (on by default, via MCP — no tokens):** `intent_sources.clickup`/`jira` are enabled. Tickets referenced in the PR/commit text are pulled in as review context by the orchestrator **through the ClickUp / Atlassian MCP server** — the plugin **never stores or uses API tokens**. `trackers.<name>.key_pattern` controls how ticket keys are recognised; adjust it to match this repo's convention. If a tracker is enabled but its MCP server is not connected, `/review` asks the user to connect it and otherwise skips that tracker for the run — and the report always states whether each tracker was used. To turn one off, set its `intent_sources` flag to `false`.
 - **`checkout` (on by default):** before reviewing, the plugin fetches the PR's base + head from `remote` (default `origin`) and **detaches HEAD onto the latest pushed head**, then restores your original branch when done — so both the diff and the reviewers' own `Read`/`Grep` see the most recent pushed code, not a stale local checkout. The head/base it reviewed is recorded in the report. If your working tree is dirty and git would overwrite it, the run stops and asks you to `git stash`/`git commit` yourself and re-run (it never stashes for you). Set `enabled: false` (or pass `--no-checkout`) to review the working tree **in place** — required when reviewing **uncommitted** local changes.
 

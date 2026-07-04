@@ -184,10 +184,9 @@
     },
     "exhaustive": {
       "type": "object",
-      "description": "Tier C ultrareview-parity passes (completeness critic, taint, generative verify, loop-until-dry). Auto-on at the critical tier or with --exhaustive; they cost extra tokens.",
+      "description": "Tier C ultrareview-parity passes (completeness critic, D3 taint verifier, and a double run of the correctness + vuln reviewers unioned by finding). Auto-on at the critical tier or with --exhaustive; they cost extra tokens.",
       "properties": {
-        "on_critical": { "type": "boolean", "description": "Run the exhaustive passes automatically when the tier is critical (default true)." },
-        "max_discovery_rounds": { "type": "integer", "minimum": 1, "maximum": 5, "description": "Loop-until-dry cap: most reviewer re-sweeps before stopping." }
+        "on_critical": { "type": "boolean", "description": "Run the exhaustive passes automatically when the tier is critical (default true)." }
       },
       "additionalProperties": false
     },

@@ -18,7 +18,7 @@
     "escalate_uncertain": true
   },
   "escalation": { "max_subagents_per_aspect": 3 },
-  "exhaustive": { "on_critical": true, "max_discovery_rounds": 2 },
+  "exhaustive": { "on_critical": true },
   "large_diff": { "shard_threshold_loc": 600, "max_shards": 4 },
   "scan": { "deps": true, "tests": false, "lint": false },
   "checkout": { "enabled": true, "remote": "origin" },

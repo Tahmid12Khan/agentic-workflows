@@ -369,7 +369,22 @@ test('exhaustivePlan: off by default, on at critical or with --exhaustive', () =
   assert.equal(exhaustivePlan('critical', {}).exhaustive, true);
   assert.equal(exhaustivePlan('standard', {}, { flag: true }).exhaustive, true);
   assert.equal(exhaustivePlan('critical', { exhaustive: { on_critical: false } }).exhaustive, false);
-  assert.equal(exhaustivePlan('critical', {}).maxRounds, 2);
+});
+
+// S7.2: the dead exhaustive machinery was retired — these fields (and max_discovery_rounds) are gone.
+test('exhaustivePlan: retired generativeVerify/loopUntilDry/maxRounds are gone (S7.2)', () => {
+  const p = exhaustivePlan('critical', { exhaustive: { on_critical: true } });
+  assert.equal(p.maxRounds, undefined);
+  assert.equal(p.generativeVerify, undefined);
+  assert.equal(p.loopUntilDry, undefined);
+});
+
+// S7.1: doubleRun (correctness + vuln reviewers run twice) tracks the exhaustive flag exactly.
+test('exhaustivePlan.doubleRun follows the exhaustive flag (S7.1)', () => {
+  assert.equal(exhaustivePlan('critical', {}).doubleRun, true);                  // auto at critical
+  assert.equal(exhaustivePlan('standard', {}, { flag: true }).doubleRun, true);  // --exhaustive at any tier
+  assert.equal(exhaustivePlan('standard', {}).doubleRun, false);                 // off on a normal review
+  assert.equal(exhaustivePlan('high', {}).doubleRun, false);                     // high uses the cheap screen, not the double-run
 });
 
 // --- S6.1: high-tier completeness screen (cheap, mutually exclusive with the exhaustive critic) ---
