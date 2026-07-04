@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { filterDiff, stripNoise, NOISE_RE, normPath } from '../lib/trim-diff.mjs';
+import { filterDiff, stripNoise, NOISE_RE, normPath, buildDiffIndex } from '../lib/trim-diff.mjs';
 
 // A realistic 3-file unified diff: a modify, a new file, and a deletion.
 const DIFF = `diff --git a/lib/foo.mjs b/lib/foo.mjs
@@ -166,4 +166,36 @@ test('normPath strips a/ b/ prefix and trailing tab metadata', () => {
   assert.equal(normPath('b/lib/foo.mjs'), 'lib/foo.mjs');
   assert.equal(normPath('lib/foo.mjs\t2026-01-01'), 'lib/foo.mjs');
   assert.equal(normPath(undefined), '');
+});
+
+test('buildDiffIndex maps files to their new-side changed line ranges (multi-hunk)', () => {
+  const diff = [
+    'diff --git a/src/foo.js b/src/foo.js',
+    'index 111..222 100644',
+    '--- a/src/foo.js',
+    '+++ b/src/foo.js',
+    '@@ -10,3 +10,4 @@ function foo() {',
+    ' ctx', '+added', ' ctx', ' ctx',
+    '@@ -40,2 +41,2 @@',
+    '-old', '+new', ' ctx', '',
+  ].join('\n');
+  assert.deepEqual(buildDiffIndex(diff)['src/foo.js'], [[10, 13], [41, 42]]);
+});
+
+test('buildDiffIndex: no-count hunk = one line; deleted file keeps an empty range list', () => {
+  const diff = [
+    'diff --git a/a.js b/a.js', '--- a/a.js', '+++ b/a.js',
+    '@@ -5 +5 @@', '-x', '+y',
+    'diff --git a/gone.js b/gone.js', 'deleted file mode 100644', '--- a/gone.js', '+++ /dev/null',
+    '@@ -1,3 +0,0 @@', '-a', '-b', '-c', '',
+  ].join('\n');
+  const idx = buildDiffIndex(diff);
+  assert.deepEqual(idx['a.js'], [[5, 5]]);   // "@@ +5 @@" → single line
+  assert.deepEqual(idx['gone.js'], []);      // deletion: path present (in changed set), no new-side lines
+});
+
+test('buildDiffIndex returns {} for empty / non-diff / null input (never throws)', () => {
+  assert.deepEqual(buildDiffIndex(''), {});
+  assert.deepEqual(buildDiffIndex('not a diff'), {});
+  assert.deepEqual(buildDiffIndex(null), {});
 });

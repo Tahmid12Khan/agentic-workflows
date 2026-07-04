@@ -259,3 +259,34 @@ test('needs-input items render even as bare strings or sparse objects (no empty 
   assert.match(html, /Needs your input/);
   assert.doesNotMatch(html, /f-loc">\?/);                // no bare "?" location
 });
+
+test('out-of-diff findings render in their own section (md + html), separate from gated findings', () => {
+  const outOfDiff = [{ file: 'src/x.js', line: 99, title: 'adjacent smell', dimension: 'D2', severity: 'minor', evidence: 'e', fix: 'f' }];
+  const md = renderReport({ findings: [], criteria, tier: 'standard', outOfDiff });
+  assert.match(md, /## Out-of-scope observations/);
+  assert.match(md, /adjacent smell/);
+  assert.match(md, /excluded from the verdict/i);
+  const html = renderHtml({ findings: [], criteria, tier: 'standard', outOfDiff });
+  assert.match(html, /Out-of-scope observations/);
+  assert.match(html, /adjacent smell/);
+});
+
+test('verdict floor: high/critical tier with zero findings → non-blocking WARN, not APPROVE', () => {
+  const gate = { block_on: ['critical'], warn_on: ['high'] };
+  assert.equal(renderVerdict([], gate, 'high').verdict, 'WARN');
+  assert.equal(renderVerdict([], gate, 'critical').verdict, 'WARN');
+  assert.equal(renderVerdict([], gate, 'high').exitCode, 0);          // floor never blocks
+  assert.equal(renderVerdict([], gate, 'standard').verdict, 'APPROVE'); // floor is high/critical only
+  // a real finding still resolves normally (floor only fires on zero)
+  assert.equal(renderVerdict([{ severity: 'critical', confidence: 100 }], gate, 'high').verdict, 'BLOCK');
+  // md surfaces the floor note
+  const md = renderReport({ findings: [], criteria, tier: 'high' });
+  assert.match(md, /WARN, not a clean pass/);
+  assert.match(md, /## Verdict: WARN/);
+});
+
+test('out-of-diff findings never affect the verdict (excluded from the gate)', () => {
+  // a critical, out-of-diff finding rides in outOfDiff — the gated `findings` list is empty → APPROVE
+  const md = renderReport({ findings: [], criteria, tier: 'standard', outOfDiff: [{ file: 'x', line: 1, title: 'crit', severity: 'critical', confidence: 100 }] });
+  assert.match(md, /## Verdict: APPROVE/);
+});

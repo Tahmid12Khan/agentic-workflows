@@ -90,8 +90,11 @@ Every run writes a self-contained report. Here is the HTML report for a `high`-t
 
 It opens with the tier + verdict, the PR number and start/finish timestamps, then the
 requirement-traceability matrix (each row named, not just `AC1`), the findings grouped by
-severity, the **Needs your input** questions, and an **Agents & coverage** rundown of
-which agents ran (model + run count) and which did not and why.
+severity, an **Out-of-scope observations** section for findings anchored outside the changed
+lines (advisory only — never gated or commented), the **Needs your input** questions, and an
+**Agents & coverage** rundown of which agents ran (model + run count) and which did not and why.
+Only findings on the changed lines drive the verdict/gate; and a `high`/`critical` change that
+surfaces **zero** findings is reported as `WARN` ("verify manually"), never a silent `APPROVE`.
 
 ### Where reviews are kept
 

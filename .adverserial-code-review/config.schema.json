@@ -63,6 +63,14 @@
       },
       "additionalProperties": false
     },
+    "diff_scope": {
+      "type": "object",
+      "description": "Diff-scope demotion: a finding anchored more than `slack` lines outside the changed hunks (on a changed file) is demoted to an advisory 'Out-of-scope observations' section — excluded from the verdict, gate, and --comment. Findings on unchanged files are always demoted; line-less findings on changed files are never demoted.",
+      "properties": {
+        "slack": { "type": "integer", "minimum": 0, "description": "Lines of tolerance above/below a hunk before a finding is treated as out-of-diff (default 3)." }
+      },
+      "additionalProperties": false
+    },
     "scan": {
       "type": "object",
       "description": "Run real tools when available (advisory; findings feed D15).",

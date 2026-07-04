@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { expandAspects, findingKey, newCaps, canSpawn, recordSpawn, buildReportPayload, pluginAgent, PLUGIN_NS } from '../lib/review-orchestration.mjs';
+import { expandAspects, findingKey, newCaps, canSpawn, recordSpawn, buildReportPayload, pluginAgent, PLUGIN_NS, inDiffScope, partitionByScope } from '../lib/review-orchestration.mjs';
 
 test('expandAspects = dimensions × shards', () => {
   const aspects = expandAspects(
@@ -129,4 +129,38 @@ test('buildReportPayload assembles all fields', () => {
   assert.equal(p.commentMode, true);
   assert.equal(p.learningStore, 's');
   assert.equal(p.range, 'a..b');
+});
+
+// --- diff-scope demotion (S1.1) ---
+const SCOPE_IDX = { 'src/foo.js': [[10, 13], [41, 42]], 'del.js': [] };
+
+test('inDiffScope: inside a hunk and within slack are kept; clearly-outside is demoted', () => {
+  assert.equal(inDiffScope({ file: 'src/foo.js', line: 11 }, SCOPE_IDX, 3), true);  // inside [10,13]
+  assert.equal(inDiffScope({ file: 'src/foo.js', line: 16 }, SCOPE_IDX, 3), true);  // 13 + slack 3
+  assert.equal(inDiffScope({ file: 'src/foo.js', line: 25 }, SCOPE_IDX, 3), false); // outside both ranges
+});
+
+test('inDiffScope: demotion keys on the FILE — never on a missing line', () => {
+  assert.equal(inDiffScope({ file: 'other.js', line: 5 }, SCOPE_IDX), false);  // unchanged file → demote
+  assert.equal(inDiffScope({ file: 'src/foo.js' }, SCOPE_IDX), true);          // changed file, no line → KEEP
+  assert.equal(inDiffScope({ file: 'src/foo.js', line: null }, SCOPE_IDX), true);
+  assert.equal(inDiffScope({ file: 'del.js', line: 999 }, SCOPE_IDX), true);   // changed, no new-side lines (deletion) → KEEP
+  assert.equal(inDiffScope({ line: 5 }, SCOPE_IDX), true);                     // no file → keep (gate-safe)
+});
+
+test('partitionByScope splits gate-affecting vs advisory findings', () => {
+  const findings = [
+    { file: 'src/foo.js', line: 11, title: 'in' },
+    { file: 'other.js', line: 5, title: 'out' },
+    { file: 'src/foo.js', title: 'lineless-kept' },
+  ];
+  const { inScope, outOfDiff } = partitionByScope(findings, SCOPE_IDX, 3);
+  assert.deepEqual(inScope.map((f) => f.title), ['in', 'lineless-kept']);
+  assert.deepEqual(outOfDiff.map((f) => f.title), ['out']);
+});
+
+test('buildReportPayload carries outOfDiff (defaults to [])', () => {
+  const base = { plan: { tier: 'high', gate: {} }, agentRuns: {} };
+  assert.deepEqual(buildReportPayload(base).outOfDiff, []);
+  assert.deepEqual(buildReportPayload({ ...base, outOfDiff: [{ title: 'x' }] }).outOfDiff, [{ title: 'x' }]);
 });
