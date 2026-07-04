@@ -3,6 +3,16 @@
 Release log for the **adversarial-code-review** plugin. Newest first. The forward-looking
 plan lives in [ROADMAP.md](ROADMAP.md). Source-of-truth version: `.claude-plugin/plugin.json`.
 
+## Unreleased
+
+Plan v2 — **S0: fix the measurement instrument** (prerequisite for all later cost work; see `plan.md`).
+
+- **Usage tally now sees reviewer cost** (`lib/usage.mjs`): `transcriptFiles` walked only the *direct* children of `<session>/subagents/`, so Workflow reviewer/verifier transcripts nested under `subagents/workflows/wf_*/agent-*.jsonl` were silently omitted — the panel measured the orchestrator only (~0 reviewer spend). It now recurses the whole `subagents` subtree (new `walkJsonl`) and tags each transcript with a `scope` (orchestrator vs subagents). The header comment documented the wrong path; fixed.
+- **Cost attribution + cache-hit%** (`lib/usage.mjs`): `computeReviewUsage` now returns `cacheHitPct` (aggregate `cacheRead / (cacheRead + input)`) and a deterministic `breakdown` of per-`(scope, model-family)` tallies (cost desc, stable tie-break). New pure exports `familyOf`, `cacheHitPct`, `tallyByFamily`; `priceFor` now delegates to `familyOf`; shared `inWindow`/`foldUsage` helpers de-dup the tally loops. Per-*dimension* attribution is intentionally not attempted — the transcripts carry no readable agent identity and the Workflow sandbox cannot write a dispatch-time manifest.
+- **Report shows the breakdown** (`lib/render.mjs`, `lib/report.mjs`): the HTML usage panel gains a cache-hit row and per-scope/model cost rows; `review.md` now carries a **Cost** section (total, cache-hit%, breakdown) — previously cost was HTML-only (`renderReport` gained a `usage` param).
+- **Docs** (`README.md`, `docs/ARCHITECTURE.md`): usage-panel description corrected (recursion, breakdown, cache-hit%, md Cost section) and the wrong transcript-path claim fixed.
+- **Tests** (`tests/usage.test.mjs`, `tests/cli.test.mjs`, `tests/render.test.mjs`): unit tests for `familyOf`/`cacheHitPct`/`tallyByFamily`; a CLI regression asserting nested `subagents/workflows/wf_*/` transcripts are counted and the scope/model breakdown is produced; render coverage for the panel breakdown + markdown Cost section.
+
 ## v0.13.0
 
 - **PR-info panel in the HTML report** (`lib/render.mjs`): the header now shows a two-column info row — token usage/cost on the left (unchanged), a new base/target commit panel on the right showing each side's branch, short sha, commit date, and subject, plus an `origin` line only when the reviewed ref diverged from `<remote>/<branch>`. The usage grid itself is now 2-wide (input | cache read on top, output | cache write below) instead of a single column. The markdown report gains the same base/target facts as header bullets.

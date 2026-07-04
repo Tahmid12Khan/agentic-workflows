@@ -193,6 +193,28 @@ test('usage panel renders in the info row below the header, omitted otherwise', 
   assert.doesNotMatch(renderHtml({ findings, criteria, tier: 'standard' }), /class="usage"/);
 });
 
+test('usage panel + markdown Cost show cache-hit% and the per-scope/model breakdown', () => {
+  const usage = {
+    inputTokens: 1000, outputTokens: 100, cacheReadTokens: 3000, cacheWriteTokens: 50, costUsd: 0.5, messages: 4,
+    cacheHitPct: 0.75,
+    breakdown: [
+      { scope: 'subagents', model: 'sonnet', costUsd: 0.4, cacheHitPct: 0.8 },
+      { scope: 'orchestrator', model: 'opus', costUsd: 0.1, cacheHitPct: 0.6 },
+    ],
+  };
+  const html = renderHtml({ findings, criteria, tier: 'standard', usage });
+  assert.match(html, /cache hit/);
+  assert.match(html, /75%/);
+  assert.match(html, /subagents · sonnet/);   // per-scope/model cost row in the panel
+  // markdown now carries a Cost section (previously HTML-only)
+  const md = renderReport({ findings, criteria, tier: 'standard', usage });
+  assert.match(md, /## Cost/);
+  assert.match(md, /cache hit 75%/);
+  assert.match(md, /\*\*subagents · sonnet\*\*/);
+  // no usage → no Cost section, markdown unchanged
+  assert.doesNotMatch(renderReport({ findings, criteria, tier: 'standard' }), /## Cost/);
+});
+
 test('PR-info panel shows base/target branch, sha, date, subject; md mirrors it', () => {
   const checkout = {
     baseRef: 'origin/main', headRef: 'origin/feature', sha: 'abc12345def67890',

@@ -244,6 +244,33 @@ test('usage.mjs tallies this run from the session main + subagent transcripts in
   } finally { rmSync(home, { recursive: true, force: true }); }
 });
 
+test('usage.mjs recurses into nested Workflow subagent transcripts + splits cost by scope/model', () => {
+  const home = mkdtempSync(join(tmpdir(), 'acr-usage-nested-'));
+  try {
+    const projDir = join(home, '.claude', 'projects', '-proj');
+    // Workflow reviewer transcripts nest deeper than subagents/: subagents/workflows/wf_*/
+    const wfDir = join(projDir, 'sess1', 'subagents', 'workflows', 'wf_deadbeef');
+    mkdirSync(wfDir, { recursive: true });
+    const line = (o) => JSON.stringify(o) + '\n';
+    writeFileSync(join(projDir, 'sess1.jsonl'),
+      line({ timestamp: '2026-06-30T10:00:00Z', message: { model: 'claude-opus-4-8', usage: { input_tokens: 1000, output_tokens: 100, cache_read_input_tokens: 500 } } }));
+    // a reviewer transcript two levels below subagents/ — the old one-level scan missed this
+    writeFileSync(join(wfDir, 'agent-r1.jsonl'),
+      line({ timestamp: '2026-06-30T10:05:00Z', message: { model: 'claude-sonnet-4-6', usage: { input_tokens: 4000, output_tokens: 400, cache_read_input_tokens: 1000 } } }));
+
+    const out = JSON.parse(run('usage.mjs', ['--home', home, '--cwd', '/proj', '--session', 'sess1', '--since', '2026-06-30T09:00:00Z']));
+    assert.equal(out.usage.inputTokens, 5000, 'nested reviewer cost must be counted, not silently dropped');
+    assert.equal(out.usage.messages, 2);
+    // aggregate cache hit% = 1500 / (1500 + 5000)
+    assert.equal(out.usage.cacheHitPct, 1500 / 6500);
+    // breakdown: orchestrator/opus and subagents/sonnet, most-expensive first
+    const scopes = out.usage.breakdown.map((b) => `${b.scope}/${b.model}`);
+    assert.ok(scopes.includes('orchestrator/opus'));
+    assert.ok(scopes.includes('subagents/sonnet'));
+    assert.ok(out.usage.breakdown[0].costUsd >= out.usage.breakdown[1].costUsd, 'breakdown sorted by cost desc');
+  } finally { rmSync(home, { recursive: true, force: true }); }
+});
+
 test('usage.mjs returns null when there is no transcript dir (degrade, no panel)', () => {
   const home = mkdtempSync(join(tmpdir(), 'acr-usage-empty-'));
   try {

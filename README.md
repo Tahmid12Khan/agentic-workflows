@@ -117,11 +117,15 @@ tracked `config.json`; the generated `review-*` folders, `learnings.json`, and
 - **`review.html`** — a single self-contained file (inline CSS, no assets). Open it in any
   browser: `open .adverserial-code-review/review-*/review-*/review.html` (macOS) or just
   double-click it. Best for reading. Its top-left **usage panel** shows what this run cost —
-  input tokens, cache reads, cache writes, output tokens, and USD cost — summed from this
-  review's session transcripts (orchestrator + every subagent) within the review window.
-  Pricing is overridable via `usage.pricing` in config; set `usage.enabled: false` to hide it.
-- **`review.md`** — the same content as Markdown. Renders inline on GitHub/GitLab or in any
-  editor; good for diffs, PR descriptions, and grepping.
+  input tokens, cache reads, cache writes, output tokens, USD cost, an aggregate **cache-hit%**,
+  and a **cost split by scope × model** (orchestrator vs the reviewer fan-out, per model family)
+  so you can see what actually dominates spend — summed from this review's session transcripts
+  (the orchestrator transcript plus the whole `subagents/` subtree, including Workflow reviewer
+  transcripts nested under `subagents/workflows/wf_*/`) within the review window. Pricing is
+  overridable via `usage.pricing` in config; set `usage.enabled: false` to hide it.
+- **`review.md`** — the same content as Markdown, now including a **Cost** section mirroring the
+  panel (total, cache-hit%, and the scope×model breakdown). Renders inline on GitHub/GitLab or in
+  any editor; good for diffs, PR descriptions, and grepping.
 
 Both files carry identical findings; pick whichever fits your workflow. The terminal also
 prints the folder path, a one-line summary, and the verdict (`APPROVE` / `WARN` / `BLOCK`).

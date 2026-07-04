@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { DEFAULT_PRICES, resolvePrices, priceFor, costOf, tallyLines, encodeProjectDir } from '../lib/usage.mjs';
+import { DEFAULT_PRICES, resolvePrices, priceFor, costOf, tallyLines, tallyByFamily, familyOf, cacheHitPct, encodeProjectDir } from '../lib/usage.mjs';
 
 test('priceFor matches model families by substring; unknown falls back to opus', () => {
   assert.equal(priceFor('claude-opus-4-8'), DEFAULT_PRICES.opus);
@@ -60,6 +60,37 @@ test('resolvePrices overlays config per family + field, leaving others default',
   assert.equal(p.opus.input, 99);
   assert.equal(p.opus.output, DEFAULT_PRICES.opus.output); // untouched field keeps default
   assert.deepEqual(p.sonnet, DEFAULT_PRICES.sonnet);        // untouched family keeps default
+});
+
+test('familyOf maps model ids to families; unknown → opus', () => {
+  assert.equal(familyOf('claude-opus-4-8'), 'opus');
+  assert.equal(familyOf('claude-sonnet-4-6'), 'sonnet');
+  assert.equal(familyOf('claude-haiku-4-5-20251001'), 'haiku');
+  assert.equal(familyOf('claude-fable-5'), 'fable');
+  assert.equal(familyOf('claude-mythos-5'), 'fable');
+  assert.equal(familyOf('something-new'), 'opus');
+  assert.equal(familyOf(undefined), 'opus');
+});
+
+test('cacheHitPct = cacheRead / (cacheRead + input); null when nothing to divide', () => {
+  assert.equal(cacheHitPct({ cacheReadTokens: 30, inputTokens: 10 }), 0.75);
+  assert.equal(cacheHitPct({ cacheReadTokens: 0, inputTokens: 100 }), 0);
+  assert.equal(cacheHitPct({ cacheReadTokens: 0, inputTokens: 0 }), null); // omit rather than show 0%
+  assert.equal(cacheHitPct({}), null);
+});
+
+test('tallyByFamily splits usage per model family, honoring the window', () => {
+  const lines = [
+    { timestamp: '2026-06-30T10:00:00Z', message: { model: 'claude-opus-4-8', usage: { input_tokens: 100 } } },
+    { timestamp: '2026-06-30T10:00:00Z', message: { model: 'claude-sonnet-4-6', usage: { input_tokens: 200, output_tokens: 20 } } },
+    { timestamp: '2026-06-30T10:00:00Z', message: { model: 'claude-sonnet-4-6', usage: { input_tokens: 300 } } },
+    { timestamp: '2026-06-30T08:00:00Z', message: { model: 'claude-haiku-4-5', usage: { input_tokens: 999 } } }, // before window
+  ];
+  const by = tallyByFamily(lines, { sinceMs: Date.parse('2026-06-30T09:00:00Z') });
+  assert.equal(by.opus.inputTokens, 100);
+  assert.equal(by.sonnet.inputTokens, 500);   // 200 + 300
+  assert.equal(by.sonnet.messages, 2);
+  assert.ok(!('haiku' in by), 'out-of-window line contributes no family bucket');
 });
 
 test('encodeProjectDir mirrors Claude Code project-dir encoding', () => {
