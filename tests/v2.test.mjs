@@ -51,6 +51,37 @@ test('selectForVerification re-checks high-severity on risk paths even at high c
   assert.equal(sel.length, 1);
 });
 
+// --- S5.3: tier-aware verify budget (verify.by_tier + dead-band guard) ---
+test('verifyPolicy defaults are tier-independent (80/80, critical unchanged)', () => {
+  for (const tier of ['low', 'standard', 'high', 'critical', undefined]) {
+    const p = verifyPolicy({}, tier);
+    assert.equal(p.reverifyBelow, 80, `${tier} reverifyBelow`);
+    assert.equal(p.reportConfidence, 80, `${tier} reportConfidence`);
+    assert.deepEqual(p.escalateDirectSeverity, ['critical'], `${tier} escalateDirectSeverity`);
+  }
+});
+test('verify.by_tier overrides the flat keys for the resolved tier only', () => {
+  const cfg = { verify: { reverify_below: 90, report_confidence: 90, by_tier: { low: { reverify_below: 85, report_confidence: 85 } } } };
+  assert.equal(verifyPolicy(cfg, 'high').reverifyBelow, 90); // flat base still applies
+  assert.equal(verifyPolicy(cfg, 'low').reverifyBelow, 85);  // by_tier[low] wins
+  assert.equal(verifyPolicy(cfg).reverifyBelow, 90);         // no tier → flat base
+});
+test('verify.by_tier can trade rigor for fewer spawns on a lower tier (both tiers tested)', () => {
+  const cfg = { verify: { by_tier: { low: { reverify_below: 60, report_confidence: 60 }, critical: { reverify_below: 90, report_confidence: 90 } } } };
+  const low = verifyPolicy(cfg, 'low');
+  const crit = verifyPolicy(cfg, 'critical');
+  const f = [{ title: 'x', confidence: 75, severity: 'minor' }];
+  assert.equal(selectForVerification(f, low).length, 0);  // 75 >= 60 → trusted, no verifier spawned
+  assert.equal(selectForVerification(f, crit).length, 1); // 75 < 90 → still verified on critical
+});
+test('guard: reverify_below is clamped up to report_confidence (no dead band)', () => {
+  // a lone reverify_below below report_confidence would strand [reverify_below, report_confidence)
+  const flat = verifyPolicy({ verify: { reverify_below: 70, report_confidence: 80 } });
+  assert.equal(flat.reverifyBelow, 80);
+  const perTier = verifyPolicy({ verify: { by_tier: { high: { reverify_below: 60, report_confidence: 80 } } } }, 'high');
+  assert.equal(perTier.reverifyBelow, 80);
+});
+
 // --- cheap→strong verifier escalation ---
 test('firstPassModel: critical goes straight to the strong model; others get the cheap one', () => {
   const p = verifyPolicy({});                                  // defaults: sonnet→opus, direct=[critical]
@@ -323,10 +354,13 @@ test('planReview ignores an unknown --tier value and falls back (no empty plan)'
 });
 
 // --- A2 hole: --dimensions must recompute models (pickModels) ---
-test('pickModels assigns a model to every dimension (opus on hot, tier model else)', () => {
-  const m = pickModels(['D3', 'D17'], 'standard', {});
-  assert.equal(m.D3, 'opus');   // hot dimension
-  assert.equal(m.D17, 'sonnet'); // not left undefined
+test('pickModels assigns a model to every dimension (opus dims at high+, tier model else)', () => {
+  const std = pickModels(['D3', 'D17'], 'standard', {});
+  assert.equal(std.D3, 'sonnet');   // S5.1: no opus below the high tier
+  assert.equal(std.D17, 'sonnet');  // not left undefined
+  const high = pickModels(['D3', 'D17'], 'high', {});
+  assert.equal(high.D3, 'opus');    // hard dimension escalates at high+
+  assert.equal(high.D17, 'sonnet');
 });
 
 // --- Tier C gate ---

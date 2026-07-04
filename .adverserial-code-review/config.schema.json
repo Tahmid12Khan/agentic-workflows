@@ -13,6 +13,32 @@
     },
     "mandatory_checks": { "type": "array", "items": { "type": "string" } },
     "project_rules": { "type": "array", "items": { "type": "string" } },
+    "always_dims": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Dimensions (Dn ids) reviewed on every run regardless of tier — e.g. 'D16' simplification, a taste pass trimmed to opt-in below the high tier. Unknown ids are ignored. Persistent equivalent of passing them via --dimensions."
+    },
+    "models": {
+      "type": "object",
+      "description": "Per-dimension reviewer model selection (model = f(dimension, tier)). opus is reserved for opus_dims and only from opus_min_tier up; below that tier they use the base model. risk_map floors (via the raised tier) and an irreversible migration (D6 → opus) still apply on top.",
+      "properties": {
+        "by_tier": {
+          "type": "object",
+          "description": "Base reviewer model per tier (default: haiku for trivial, sonnet otherwise). Keys: trivial/low/standard/high/critical → a model name.",
+          "properties": {
+            "trivial": { "type": "string" },
+            "low": { "type": "string" },
+            "standard": { "type": "string" },
+            "high": { "type": "string" },
+            "critical": { "type": "string" }
+          },
+          "additionalProperties": false
+        },
+        "opus_dims": { "type": "array", "items": { "type": "string" }, "description": "Dimensions escalated to the strong model at opus_min_tier and above (default D3, D7, D9)." },
+        "opus_min_tier": { "type": "string", "enum": ["trivial", "low", "standard", "high", "critical"], "description": "Lowest tier at which opus_dims run on the strong model (default 'high') — below it they use by_tier[tier]." }
+      },
+      "additionalProperties": false
+    },
     "intent_sources": {
       "type": "object",
       "properties": {
@@ -43,7 +69,19 @@
         "escalate_uncertain": { "type": "boolean", "description": "Still-uncertain after the cap → surface to the human, do not drop." },
         "model_first": { "type": "string", "description": "Model for the first (cheap) verifier pass. Default 'sonnet'." },
         "model_escalate": { "type": "string", "description": "Model the verifier escalates to on an uncertain or hot-refuted verdict, and runs directly for the severities in escalate_direct_severity. Its verdict is authoritative — the cheap one is discarded. Default 'opus'." },
-        "escalate_direct_severity": { "type": "array", "items": { "type": "string", "enum": ["critical", "important", "minor", "suggestion"] }, "description": "Severities that skip the cheap pass and go straight to model_escalate. Default ['critical']." }
+        "escalate_direct_severity": { "type": "array", "items": { "type": "string", "enum": ["critical", "important", "minor", "suggestion"] }, "description": "Severities that skip the cheap pass and go straight to model_escalate. Default ['critical']." },
+        "by_tier": {
+          "type": "object",
+          "description": "Per-tier overrides of the verify keys above. A tier entry (trivial/low/standard/high/critical) overrides the flat keys for that resolved tier; the flat keys stay the base. reverify_below is clamped up to report_confidence per tier so a per-tier relaxation can lower both together (fewer verifier spawns) but never opens a [reverify_below, report_confidence) dead band. Defaults keep 80/80 on every tier, so worst-case rigor is unchanged unless a project opts in here.",
+          "properties": {
+            "trivial": { "$ref": "#/definitions/verifyTier" },
+            "low": { "$ref": "#/definitions/verifyTier" },
+            "standard": { "$ref": "#/definitions/verifyTier" },
+            "high": { "$ref": "#/definitions/verifyTier" },
+            "critical": { "$ref": "#/definitions/verifyTier" }
+          },
+          "additionalProperties": false
+        }
       },
       "additionalProperties": false
     },
@@ -158,6 +196,21 @@
     "knowledge_packs": { "type": "object" }
   },
   "definitions": {
+    "verifyTier": {
+      "type": "object",
+      "description": "Per-tier subset of the verify keys. Only the keys set here override the flat verify policy for that tier.",
+      "properties": {
+        "max_passes_per_aspect": { "type": "integer", "minimum": 1, "maximum": 3 },
+        "max_subagents_per_aspect": { "type": "integer", "minimum": 1, "maximum": 3 },
+        "reverify_below": { "type": "integer", "minimum": 0, "maximum": 100 },
+        "report_confidence": { "type": "integer", "minimum": 0, "maximum": 100 },
+        "escalate_uncertain": { "type": "boolean" },
+        "model_first": { "type": "string" },
+        "model_escalate": { "type": "string" },
+        "escalate_direct_severity": { "type": "array", "items": { "type": "string", "enum": ["critical", "important", "minor", "suggestion"] } }
+      },
+      "additionalProperties": false
+    },
     "familyPrice": {
       "type": "object",
       "properties": {

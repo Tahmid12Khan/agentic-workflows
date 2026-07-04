@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import { computeSignals } from '../lib/signals.mjs';
-import { planReview } from '../lib/triage.mjs';
+import { planReview, pickModels } from '../lib/triage.mjs';
 
 const dir = new URL('../fixtures/cases/', import.meta.url);
 const cases = readdirSync(dir).map(f => JSON.parse(readFileSync(new URL(f, dir))));
@@ -40,12 +40,70 @@ test('payment change → critical tier, security+concurrency mandatory, verify o
   assert.equal(plan.models.D3, 'opus');
 });
 
-test('normal feature → standard tier, simplifier suggestions, verify on', () => {
+test('normal feature → standard tier, D16 opt-in below high, verify on', () => {
   const f = cases.find(c => c.name === 'normal feature');
   const plan = planReview(computeSignals(f), DEFAULT_CFG);
   assert.equal(plan.tier, 'standard');
-  assert.ok(plan.dimensions.includes('D16'));
+  // S5.2: simplification (D16) is a taste pass, trimmed to opt-in below the high tier
+  assert.equal(plan.dimensions.includes('D16'), false);
   assert.equal(plan.runVerify, true);
+});
+
+test('S5.2: always_dims brings D16 back on standard; --dimensions is the other opt-in', () => {
+  const f = cases.find(c => c.name === 'normal feature');
+  const withD16 = planReview(computeSignals(f), { ...DEFAULT_CFG, always_dims: ['D16'] });
+  assert.equal(withD16.tier, 'standard');
+  assert.ok(withD16.dimensions.includes('D16'));
+  assert.ok(withD16.agents.includes('simplification-reviewer'));
+  // an unknown id in always_dims is ignored, not carried into the plan
+  const bogus = planReview(computeSignals(f), { ...DEFAULT_CFG, always_dims: ['D999'] });
+  assert.equal(bogus.dimensions.includes('D999'), false);
+});
+
+test('S5.2: D16 still ships by default on the high tier (not opt-in there)', () => {
+  const plan = planReview({ riskPaths: [], languages: [], callsLlm: false }, DEFAULT_CFG, 'high');
+  assert.ok(plan.dimensions.includes('D16'));
+});
+
+test('S5.1: model = f(dimension, tier) — no opus below high, opus dims escalate at high+', () => {
+  const std = pickModels(['D3', 'D7', 'D9', 'D2'], 'standard', {});
+  for (const d of ['D3', 'D7', 'D9', 'D2']) assert.equal(std[d], 'sonnet', `${d} must be sonnet on standard`);
+  const high = pickModels(['D3', 'D7', 'D9', 'D2'], 'high', {});
+  assert.equal(high.D3, 'opus');
+  assert.equal(high.D7, 'opus');
+  assert.equal(high.D9, 'opus');
+  assert.equal(high.D2, 'sonnet');
+  assert.equal(pickModels(['D3'], 'trivial', {}).D3, 'haiku'); // tier base model at trivial
+});
+
+test('S5.1: a risk_map floor raising the tier is what earns opus on standard-tier code', () => {
+  const f = cases.find(c => c.name === 'normal feature');
+  const s = computeSignals(f);
+  // without a floor: standard tier, no opus even on a hard dimension added via --dimensions-style set
+  assert.equal(pickModels([...planReview(s, DEFAULT_CFG).dimensions, 'D3'], 'standard', {}).D3, 'sonnet');
+  // with a floor raising it to critical, the hard dimension gets opus (post-matrix, via the tier)
+  const forced = planReview(s, { ...DEFAULT_CFG, risk_map: { critical: ['src/profile/**'] } });
+  assert.equal(forced.tier, 'critical');
+  assert.equal(pickModels([...forced.dimensions, 'D3'], forced.tier, s).D3, 'opus');
+});
+
+test('S5.1: migration escalates D6 to opus even below high (post-matrix override)', () => {
+  const m = pickModels(['D6', 'D2'], 'standard', { riskPaths: ['migration'] });
+  assert.equal(m.D6, 'opus');   // migration override fires regardless of tier
+  assert.equal(m.D2, 'sonnet'); // everything else stays on the tier base model
+});
+
+test('S5.1: config.models overrides the matrix (opus_dims, opus_min_tier, by_tier)', () => {
+  // move the opus floor down to standard
+  const lower = pickModels(['D3'], 'standard', {}, { models: { opus_min_tier: 'standard' } });
+  assert.equal(lower.D3, 'opus');
+  // redefine which dimensions are hard
+  const redef = pickModels(['D4', 'D3'], 'high', {}, { models: { opus_dims: ['D4'] } });
+  assert.equal(redef.D4, 'opus');
+  assert.equal(redef.D3, 'sonnet');
+  // override the per-tier base model
+  const base = pickModels(['D2'], 'standard', {}, { models: { by_tier: { standard: 'haiku' } } });
+  assert.equal(base.D2, 'haiku');
 });
 
 test('risk_map config can force a tier floor', () => {

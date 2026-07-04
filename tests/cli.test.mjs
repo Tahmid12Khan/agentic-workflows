@@ -80,6 +80,17 @@ test('verify.mjs select picks only the low-confidence finding', () => {
   assert.equal(out.maxVerifierPasses, 2);
 });
 
+test('verify.mjs select honours verify.by_tier for the passed tier', () => {
+  const cfg = { verify: { by_tier: { low: { reverify_below: 60, report_confidence: 60 } } } };
+  const findings = [{ title: 'mid', confidence: 70, severity: 'minor' }];
+  // low tier: 70 >= 60 → trusted, not selected
+  const low = JSON.parse(run('verify.mjs', ['select'], { input: JSON.stringify({ findings, config: cfg, tier: 'low' }) }));
+  assert.deepEqual(low.select.map((f) => f.title), []);
+  // no tier → flat default 80 → 70 < 80 → selected
+  const flat = JSON.parse(run('verify.mjs', ['select'], { input: JSON.stringify({ findings, config: cfg }) }));
+  assert.deepEqual(flat.select.map((f) => f.title), ['mid']);
+});
+
 test('verify.mjs resolve keeps confirmed, drops refuted, escalates ties', () => {
   const input = JSON.stringify({
     findings: [

@@ -160,15 +160,15 @@ preflight  gather    plan                harvest/    reviewers         separate 
 |------|---------|--------|
 | Trivial | typo, comment, doc | one quick inline pass, no subagents |
 | Low | small localized logic w/ tests | one reviewer |
-| Standard | normal feature/bugfix | correctness + screens + simplify |
-| High | shared lib, API contract, perf hot path | full fan-out + bounded verify |
+| Standard | normal feature/bugfix | correctness + screens |
+| High | shared lib, API contract, perf hot path | full fan-out + simplify + bounded verify |
 | Critical | auth, payments, migrations, concurrency, crypto | all dimensions, deepest models, bounded verify |
 
 `risk_map` and `mandatory_checks` in `.adverserial-code-review/config.json` are **floors** triage cannot skip.
 
 ### Bounded adversarial verification
 
-Runs on **high/critical tiers** (lower tiers ship at the ≥80 gate). The user-tunable contract: re-check **only the aspects a reviewer was unsure about** — never the whole review — and look at any one aspect **at most 3 times** (1 review + ≤ 2 verifier passes), with **at most 3 subagents** on it; the look-cap is hard-enforced in `verify.mjs` (verdicts are sliced to the budget) and the subagent-cap is decided in code by `route.mjs spawn` (the orchestrator threads the ledger and stops on `ok:false`). Each verifier attacks from a **dimension-appropriate lens** (`verify.mjs select` attaches it; security findings route to a `taint-verifier`). A verifier tries to *refute* the finding; majority rules; a **critical/important finding is not dropped on a single refuter** when escalation is enabled and a 2nd look is affordable (lone refutation → needs-human); any unresolved split is handed to you, not dropped. Configure under `verify` / `escalation`.
+Runs on **every non-trivial tier** (`plan.runVerify`), with findings shipping at the ≥80 gate by default. The user-tunable contract: re-check **only the aspects a reviewer was unsure about** — never the whole review — and look at any one aspect **at most 3 times** (1 review + ≤ 2 verifier passes), with **at most 3 subagents** on it; the look-cap is hard-enforced in `verify.mjs` (verdicts are sliced to the budget) and the subagent-cap is decided in code by `route.mjs spawn` (the orchestrator threads the ledger and stops on `ok:false`). Each verifier attacks from a **dimension-appropriate lens** (`verify.mjs select` attaches it; security findings route to a `taint-verifier`). A verifier tries to *refute* the finding; majority rules; a **critical/important finding is not dropped on a single refuter** when escalation is enabled and a 2nd look is affordable (lone refutation → needs-human); any unresolved split is handed to you, not dropped. Configure under `verify` / `escalation`. The confidence bar is **80/80 on every tier by default** (worst-case rigor is never lowered for you); a project can spend a **per-tier verify budget** via `verify.by_tier.<tier>` — e.g. trust findings at a lower confidence on a lower-risk tier to spawn fewer verifiers. `reverify_below` is clamped up to `report_confidence` per tier, so a per-tier relaxation lowers both together and never opens a dead band.
 
 ## Dimensions & agents
 
@@ -177,25 +177,25 @@ Runs on **high/critical tiers** (lower tiers ship at the ≥80 gate). The user-t
 | Dim | Agent | Model |
 |-----|-------|-------|
 | D1/D2/D12 | correctness-reviewer | sonnet |
-| D3 security | vuln-reviewer | opus |
+| D3 security | vuln-reviewer | opus at high/critical · sonnet below |
 | D4 error handling | error-handling-reviewer | sonnet |
 | D5 tests | test-adequacy-reviewer | sonnet |
 | D6/D8 data & resources | data-store-reviewer | sonnet · opus on migration |
-| D7 concurrency | concurrency-reviewer | opus |
-| D9 perf | perf-scalability-reviewer | opus |
+| D7 concurrency | concurrency-reviewer | opus at high/critical · sonnet below |
+| D9 perf | perf-scalability-reviewer | opus at high/critical · sonnet below |
 | D10 API compat | api-compat-reviewer | sonnet |
 | D11 types | type-design-reviewer | sonnet |
 | D13 docs | docs-comment-reviewer | haiku |
 | D14 observability | observability-reviewer | sonnet |
 | D15 deps/CVE | dependency-reviewer | sonnet |
-| D16 simplification | simplification-reviewer | sonnet |
+| D16 simplification | simplification-reviewer | sonnet · high+ only (opt-in below via `always_dims`/`--dimensions`) |
 | D17 a11y/i18n | a11y-i18n-reviewer | sonnet |
 
 Each is isolated (clean packet: intent + criteria + diff, never the chat history), changed-lines-only, and confidence-gated (≥ 80).
 
 ## Configuration — `.adverserial-code-review/config.json`
 
-Created by `/review-init`; schema at `.adverserial-code-review/config.schema.json`. Beyond `risk_map`, `mandatory_checks`, `project_rules`, `intent_sources`, and `gate`, v0.2 adds: `verify`, `escalation`, `large_diff`, `scan`, `learning`, `notify`, `checkout` (detach HEAD onto the remote's latest base/head for the review and restore it afterward — so it reviews the most recent pushed code, not the local checkout; the head/base reviewed is recorded in the report), `trackers` (ClickUp/Jira — tickets fetched via MCP, **no API tokens**; if a tracker's MCP server isn't connected, `/review` asks you to enable it and the report states whether each tracker was used), and `usage` (the cost panel — `usage.enabled` to toggle it, `usage.pricing` to override the per-model-family price table).
+Created by `/review-init`; schema at `.adverserial-code-review/config.schema.json`. Beyond `risk_map`, `mandatory_checks`, `project_rules`, `intent_sources`, and `gate`, v0.2 adds: `always_dims` (dimensions reviewed on every run regardless of tier — e.g. `D16`), `models` (per-dimension model matrix — `opus_dims`, `opus_min_tier`, `by_tier`), `verify` (incl. `verify.by_tier.<tier>` per-tier budget), `escalation`, `large_diff`, `scan`, `learning`, `notify`, `checkout` (detach HEAD onto the remote's latest base/head for the review and restore it afterward — so it reviews the most recent pushed code, not the local checkout; the head/base reviewed is recorded in the report), `trackers` (ClickUp/Jira — tickets fetched via MCP, **no API tokens**; if a tracker's MCP server isn't connected, `/review` asks you to enable it and the report states whether each tracker was used), and `usage` (the cost panel — `usage.enabled` to toggle it, `usage.pricing` to override the per-model-family price table).
 
 ## Layout
 

@@ -196,29 +196,38 @@ flowchart TD
 | Tier | Base dimensions |
 |------|-----------------|
 | trivial | D2, D13 |
-| low | D1, D2, D5, D16 |
-| standard | D1, D2, D4, D5, D12, D16 |
+| low | D1, D2, D5 |
+| standard | D1, D2, D4, D5, D12 |
 | high | D1, D2, D4, D5, D10, D11, D12, D16 |
 | critical | D1, D2, D3, D4, D5, D6, D7, D8, D12, D14 |
 
-**Model tiering** — `opus` is reserved for the three hardest dimensions (D3 security,
-D7 concurrency, D9 perf) and for a migration (D6 → opus whenever the `migration` risk
-path is detected); everything else runs on the tier's model (`haiku` at trivial,
-otherwise `sonnet`). The adversarial verifier runs on `opus`.
+**D16 (simplification)** is a taste pass, not a defect pass, so it ships by default only
+from the **high** tier up; below that it is opt-in via `always_dims` (config) or
+`--dimensions D16`.
+
+**Model tiering — `pickModels` is a matrix `f(dimension, tier)`.** `opus` is reserved for
+the three hardest dimensions (`OPUS_DIMS` = D3 security, D7 concurrency, D9 perf) **and only
+from `OPUS_MIN_TIER` (`high`) up** — a standard/low change gets no opus reviewer unless a
+`risk_map` floor raised its tier. Two **post-matrix overrides** apply on top of the cell:
+a migration (D6 → opus whenever the `migration` risk path is detected, at any tier), and —
+via the already-raised tier — `risk_map`/`--tier` floors. Everything else runs on the tier's
+base model (`haiku` at trivial, otherwise `sonnet`). The matrix is config-overridable via the
+`models` block (`opus_dims`, `opus_min_tier`, `by_tier`). The adversarial verifier runs on
+its own cheap→strong ladder (see below), independent of this matrix.
 
 ---
 
 ## The tier ladder
 
 Five rungs. Each adds reviewers and depth over the one below. Most diffs land low, so most
-reviews stay cheap — and the verification pass only kicks in from **High** up.
+reviews stay cheap — and the verification pass runs on every non-trivial tier (from **Low** up).
 
 | Tier | Example change | What runs | Verify? |
 |------|----------------|-----------|---------|
 | **Trivial** | typo, comment, doc-only | one quick inline pass — no subagents | no |
-| **Low** | small localized logic, with tests | a single reviewer | no |
-| **Standard** | a normal feature or bugfix | correctness + screens + simplify | no |
-| **High** | shared lib, API contract, hot path | full fan-out + bounded verify | **yes** |
+| **Low** | small localized logic, with tests | a single reviewer | **yes** |
+| **Standard** | a normal feature or bugfix | correctness + screens | **yes** |
+| **High** | shared lib, API contract, hot path | full fan-out + simplify + bounded verify | **yes** |
 | **Critical** | auth, payments, migrations, crypto, concurrency | all dimensions, deepest models, verify + exhaustive | **yes** |
 
 `risk_map` and `mandatory_checks` in the config are **floors** triage cannot skip.
@@ -280,7 +289,17 @@ The verifier spends the cheap model first and the strong model only where it ear
 - **`shouldEscalate`** — after a cheap pass, escalate to the strong model when the cheap verdict can't stand alone: it was `uncertain`, or it `refuted` a hot (`critical`/`important`/`high`) finding — never drop a hot finding on a single cheap refuter. A clean confirm/refute of a non-hot finding stands as-is.
 - On escalation the **strong verdict is authoritative** — the cheap one is discarded (a single verdict still feeds `resolveVerification`). Escalation spends one more of the ≤ 3-subagents-per-aspect budget, so it stays inside the same cap.
 
-Both helpers are pure + unit-tested in `lib/verify.mjs` and inlined into the Workflow. The policy itself is resolved **once** in `plan.mjs` (`verifyPolicy(config)` → `plan.verify`, camelCase); the Workflow sandbox consumes that resolved object directly and never re-parses raw config.
+Both helpers are pure + unit-tested in `lib/verify.mjs` and inlined into the Workflow. The policy itself is resolved **once** in `plan.mjs` (`verifyPolicy(config, plan.tier)` → `plan.verify`, camelCase); the Workflow sandbox consumes that resolved object directly and never re-parses raw config.
+
+**Per-tier verify budget (`verify.by_tier.<tier>`).** `verifyPolicy` takes the resolved
+tier and layers `verify.by_tier.<tier>` over the flat keys, so a project can spend a
+different verification budget per tier — e.g. trust findings at a lower confidence on a
+lower-risk tier to spawn fewer verifiers. The **default is 80/80 on every tier**, so
+worst-case rigor is never lowered for you; per-tier relaxation is opt-in. A **guard** clamps
+`reverify_below` up to `report_confidence` inside `verifyPolicy`: a `[reverify_below,
+report_confidence)` gap is a dead band (a finding there skips verification yet fails the
+report bar, landing unverified in needs-human), so a per-tier override must lower **both**
+together and can never open the gap.
 
 ### How a verdict is decided (`resolveVerification`)
 
@@ -401,11 +420,13 @@ optional and falls back to a sensible default.
 | Key | What it controls |
 |---|---|
 | `risk_map` | glob → tier floors (`critical`, `high`). Can only **raise** a tier. |
+| `always_dims` | dimensions (Dn ids) reviewed on every run regardless of tier — e.g. `D16` (opt-in below high). Unknown ids ignored. |
+| `models` | per-dimension model matrix `f(dim, tier)`: `opus_dims` (which dims escalate), `opus_min_tier` (the floor tier, default `high`), `by_tier` (base model per tier). |
 | `mandatory_checks` | checks applied as forced review items at every tier (mapped to a dimension by `route.mjs`). |
 | `project_rules` | house rules fed into every reviewer packet (drives D12). |
 | `intent_sources` | toggle PR / commits / pr_comments / clickup / jira as intent inputs. |
 | `gate` | `block_on` / `warn_on` severity lists → the `APPROVE`/`WARN`/`BLOCK` verdict. |
-| `verify` | bounded-verify policy: passes/aspect, subagents/aspect, `reverify_below`, `report_confidence`, `escalate_uncertain`, and the cheap→strong escalation (`model_first`, `model_escalate`, `escalate_direct_severity`). |
+| `verify` | bounded-verify policy: passes/aspect, subagents/aspect, `reverify_below`, `report_confidence`, `escalate_uncertain`, the cheap→strong escalation (`model_first`, `model_escalate`, `escalate_direct_severity`), and `by_tier.<tier>` per-tier overrides (defaults 80/80 every tier; `reverify_below` clamped up to `report_confidence`). |
 | `escalation` | spawn-on-doubt cap (subagents per aspect). |
 | `large_diff` | `shard_threshold_loc`, `max_shards`. |
 | `scan` | run `deps` / `tests` / `lint` tools when available (advisory). |
