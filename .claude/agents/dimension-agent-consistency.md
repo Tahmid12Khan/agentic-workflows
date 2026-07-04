@@ -15,7 +15,7 @@ In scope: `agents/*-reviewer.md` (the dimension reviewers). Cross-check the dime
 
 ## The canonical contract every dimension reviewer must satisfy
 
-1. **Frontmatter**: `name` (kebab-case, == filename without `.md`); `description` ending `Advisory only.`; `model` ∈ {`opus`,`sonnet`,`haiku`}; `tools: Read, Grep, Glob, Bash`.
+1. **Frontmatter**: `name` (kebab-case, == filename without `.md`); `description` ending `Advisory only.`; `model` ∈ {`opus`,`sonnet`,`haiku`}; `tools: Read, Grep, Glob` (no `Bash` — reviewers explore via the shared context pack, not a shell).
 2. **Body**: opens by stating it is advisory; has a `Focus —` block of dimension-specific checks; carries the **SHARED RULES** block; ends with the **OUTPUT — emit ONLY this JSON object** contract.
 3. **Finding object** (the merge unit):
    - `dimension`: a `D<n>` id.

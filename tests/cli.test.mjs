@@ -104,6 +104,37 @@ test('scan.mjs returns a JSON envelope even with no scanner', () => {
   } finally { rmSync(tmp, { recursive: true, force: true }); }
 });
 
+test('context-pack.mjs emits enclosing defs + in-repo callers from a real diff', () => {
+  const repo = mkdtempSync(join(tmpdir(), 'acr-ctx-'));
+  const git = (...a) => execFileSync('git', a, { cwd: repo, stdio: ['pipe', 'pipe', 'pipe'] });
+  try {
+    git('init', '-q');
+    git('config', 'user.email', 't@t'); git('config', 'user.name', 't');
+    writeFileSync(join(repo, 'math.mjs'), 'export function add(a, b) {\n  return a + b;\n}\n');
+    writeFileSync(join(repo, 'caller.mjs'), "import { add } from './math.mjs';\nconsole.log(add(1, 2));\n");
+    git('add', '-A'); git('commit', '-qm', 'init');
+    // change the body of add() (not its signature)
+    writeFileSync(join(repo, 'math.mjs'), 'export function add(a, b) {\n  const s = a + b;\n  return s;\n}\n');
+    writeFileSync(join(repo, 'diff.txt'), execFileSync('git', ['diff'], { cwd: repo, encoding: 'utf8' }));
+    const out = execFileSync(node, [join(LIB, 'context-pack.mjs'), '--diff', join(repo, 'diff.txt')], { cwd: repo, encoding: 'utf8' });
+    assert.match(out, /CONTEXT PACK/);
+    assert.match(out, /FILE: math\.mjs/);
+    assert.match(out, /export function add\(a, b\)/); // the WHOLE enclosing def, not just the changed line
+    assert.match(out, /const s = a \+ b;/);
+    assert.match(out, /callers of changed exports/i);
+    assert.match(out, /add <- caller\.mjs:/);          // in-repo caller found via git grep, def site excluded
+  } finally { rmSync(repo, { recursive: true, force: true }); }
+});
+
+test('context-pack.mjs degrades to a note when the diff has no changed source files', () => {
+  const repo = mkdtempSync(join(tmpdir(), 'acr-ctx-empty-'));
+  try {
+    writeFileSync(join(repo, 'diff.txt'), '');
+    const out = execFileSync(node, [join(LIB, 'context-pack.mjs'), '--diff', join(repo, 'diff.txt')], { cwd: repo, encoding: 'utf8' });
+    assert.match(out, /no changed source files/);
+  } finally { rmSync(repo, { recursive: true, force: true }); }
+});
+
 test('report.mjs writes review.md + review.html and blocks on a critical finding', () => {
   const tmp = mkdtempSync(join(tmpdir(), 'acr-report-'));
   try {

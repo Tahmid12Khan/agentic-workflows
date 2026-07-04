@@ -13,7 +13,7 @@ Pick the next free D-number — check `DIMENSION_LABELS` in `lib/triage.mjs` for
 
 Copy `template-reviewer.md` (in this skill dir) to `agents/<name>-reviewer.md`. It is a verbatim copy of the canonical reviewer shape (see `agents/a11y-i18n-reviewer.md`, the cleanest recent precedent). Fill in:
 
-- Frontmatter: `name: <name>-reviewer` (kebab-case, == filename), one-line `description` ending `Advisory only.`, `model:` (`sonnet` default; `opus` for hard-reasoning dims; `haiku` for the lightest), `tools: Read, Grep, Glob, Bash`.
+- Frontmatter: `name: <name>-reviewer` (kebab-case, == filename), one-line `description` ending `Advisory only.`, `model:` (`sonnet` default; `opus` for hard-reasoning dims; `haiku` for the lightest), `tools: Read, Grep, Glob` (no `Bash` — reviewers explore via the shared context pack, capped at ~4 extra Read/Grep calls).
 - Body `Focus — Dxx <label> on the changed lines:` with 4–6 specific checks.
 - Keep the **SHARED RULES** block and the **OUTPUT JSON** contract verbatim — they are load-bearing. The finding's `"dimension"` must be `"Dxx"`, severity stays in the 4-value vocab (`critical|important|minor|suggestion`), evidence must cite `file:line`, and the `confidence >= 80` / `uncertain` gate must remain.
 

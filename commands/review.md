@@ -23,6 +23,7 @@ Resolve base/head, fetch them, and **detach HEAD onto the latest pushed head** v
 - `node "$LIB/plan.mjs" --base <baseRef>` (pass through `--tier`/`--dimensions`/`--exhaustive`) **`> "$SCRATCH/plan.json"`**. To branch on the tier, read just one field: `TIER=$(node -e 'process.stdout.write(require("$SCRATCH/plan.json").tier)')` — do **not** read the whole file. If `TIER == trivial`: do one quick inline correctness/comment pass, build a minimal payload (still including `plan` + `agentRuns:{}`) and skip to step 5.
 - `node "$LIB/gather.mjs" --base <baseRef>` **`> "$SCRATCH/bundle.json"`**. Fetch linked tickets via the ClickUp/Atlassian **MCP** (never API tokens); if a tracker is enabled but its MCP is absent, ask once to connect, else skip. Write any dynamic enrichment (live PR object, fetched ticket, `trackerUsage`) as a small **`$SCRATCH/enrich.json`** — `build-args.mjs` merges it onto the bundle, so you never reshape the big bundle yourself.
 - `git diff <baseRef>..HEAD > "$SCRATCH/diff.txt"` — capture, never read into context.
+- `node "$LIB/context-pack.mjs" --diff "$SCRATCH/diff.txt" > "$SCRATCH/context.txt"` — build the **shared context pack** (enclosing definitions of changed code, import blocks, in-repo callers of changed exports) once, from `$SCRATCH/diff.txt` + the checked-out working tree. `build-args.mjs` attaches it as `args.contextPack`; the Workflow prepends it to every reviewer so they read it before their own Read/Grep. Advisory + degrade-only — on any error it writes an empty/short file and reviewers fall back to Read/Grep. Never read `context.txt` into your own context.
 - If `learning.enabled`: `node "$LIB/memory.mjs" load <store>` → carry as context.
 - If `scan.deps`: `node "$LIB/scan.mjs"` → seed D15 findings + notes (fold into `enrich.json`).
 - Routing (deterministic): `echo '<grouper-or-empty>' | node "$LIB/route.mjs" scrutiny > "$SCRATCH/scrutiny.json"` and `echo '{"mandatoryChecks":<plan.mandatoryChecks>}' | node "$LIB/route.mjs" checks > "$SCRATCH/checks.json"`.
@@ -36,7 +37,7 @@ The Workflow owns intent, per-aspect review (`dimensions × shards`), per-findin
 node "$LIB/build-args.mjs" --dir "$SCRATCH" > "$SCRATCH/args.json"
 ```
 
-`build-args.mjs` reads plan/bundle/diff/routing/meta/enrich from `$SCRATCH` and emits args in the exact shape the workflow destructures (`{ plan, bundle, diff, shards, routing, flags, startedAt, prNumber, checkout }`). The bulky diff is read from disk there and **never enters your context**. Then read `args.json` **once** and pass it as the `args` value:
+`build-args.mjs` reads plan/bundle/diff/context/routing/meta/enrich from `$SCRATCH` and emits args in the exact shape the workflow destructures (`{ plan, bundle, diff, contextPack, shards, routing, flags, startedAt, prNumber, checkout }`). The bulky diff and context pack are read from disk there and **never enter your context**. Then read `args.json` **once** and pass it as the `args` value:
 
 ```
 Workflow({ scriptPath: "$LIB/review-workflow.mjs", args: <contents of args.json> })

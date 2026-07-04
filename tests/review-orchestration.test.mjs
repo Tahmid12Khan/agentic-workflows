@@ -91,6 +91,10 @@ test('review-workflow.mjs declares a valid meta with 4 phases', () => {
   // cheap→strong verifier escalation helpers are inlined (canonical: lib/verify.mjs)
   assert.match(src, /function firstPassModel\(/, 'firstPassModel must be inlined (canonical: lib/verify.mjs)');
   assert.match(src, /function shouldEscalate\(/, 'shouldEscalate must be inlined (canonical: lib/verify.mjs)');
+  // S2: the shared context pack is destructured from args and prepended to every reviewer packet
+  assert.match(src, /const \{ plan, bundle, diff, contextPack,/, 'contextPack must be destructured from args');
+  assert.match(src, /const packBlock =/, 'the context pack must be turned into a prepend block');
+  assert.match(src, /\$\{packBlock\}/, 'packBlock must be prepended to the reviewer packet(s)');
   // diff-trim (rank 1) is inlined + canonical in lib/trim-diff.mjs; D3 (security) stays on the full diff
   assert.match(src, /function filterDiff\(/, 'filterDiff must be inlined (canonical: lib/trim-diff.mjs)');
   assert.match(src, /diffForAspect/, 'dimension reviewers must use the shard-scoped diffForAspect');

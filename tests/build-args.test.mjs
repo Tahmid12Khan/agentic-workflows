@@ -25,10 +25,11 @@ test('buildArgs: emits exactly the keys review-workflow.mjs destructures', () =>
     meta: { flags: { gate: true }, startedAt: 'T', prNumber: 7, checkout: null },
   });
   assert.deepEqual(Object.keys(out).sort(),
-    ['bundle', 'checkout', 'diff', 'flags', 'plan', 'prNumber', 'routing', 'shards', 'startedAt'].sort());
+    ['bundle', 'checkout', 'contextPack', 'diff', 'flags', 'plan', 'prNumber', 'routing', 'shards', 'startedAt'].sort());
   assert.deepEqual(out.shards, [{ label: 'all', files: ['a.js'] }]); // lifted from plan
   assert.deepEqual(out.routing, { scrutiny: { foo: 1 }, checks: { bar: 2 } });
   assert.equal(out.prNumber, 7);
+  assert.equal(out.contextPack, '');   // absent → '' so the workflow prepends nothing
 });
 
 test('buildArgs: missing meta/routing degrade to safe defaults, not throws', () => {
@@ -37,6 +38,12 @@ test('buildArgs: missing meta/routing degrade to safe defaults, not throws', () 
   assert.deepEqual(out.routing, { scrutiny: null, checks: null });
   assert.deepEqual(out.flags, {});
   assert.equal(out.startedAt, null);
+  assert.equal(out.contextPack, '');
+});
+
+test('buildArgs: a provided context pack is carried through verbatim', () => {
+  const out = buildArgs({ plan: {}, bundle: {}, diff: 'd', contextPack: 'PACK TEXT' });
+  assert.equal(out.contextPack, 'PACK TEXT');
 });
 
 test('CLI: assembles from --dir and merges enrich.json onto bundle', () => {
@@ -47,6 +54,7 @@ test('CLI: assembles from --dir and merges enrich.json onto bundle', () => {
     writeFileSync(join(dir, 'diff.txt'), 'diff --git a/a.js b/a.js\n');
     writeFileSync(join(dir, 'meta.json'), '{"flags":{"gate":true},"prNumber":231}');
     writeFileSync(join(dir, 'enrich.json'), '{"pr":{"number":231},"trackerUsage":{"clickup":true}}');
+    writeFileSync(join(dir, 'context.txt'), 'CONTEXT PACK: defs + callers\n');
     const r = spawnSync(process.execPath, [SCRIPT, '--dir', dir], { encoding: 'utf8' });
     assert.equal(r.status, 0, r.stderr);
     const a = JSON.parse(r.stdout);
@@ -55,6 +63,18 @@ test('CLI: assembles from --dir and merges enrich.json onto bundle', () => {
     assert.equal(a.bundle.trackerUsage.clickup, true);
     assert.equal(a.prNumber, 231);
     assert.equal(a.flags.gate, true);
+    assert.match(a.contextPack, /CONTEXT PACK/);    // context.txt attached file→file
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('CLI: a missing context.txt degrades to an empty contextPack (not a failure)', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'build-args-'));
+  try {
+    writeFileSync(join(dir, 'plan.json'), '{"tier":"standard"}');
+    writeFileSync(join(dir, 'diff.txt'), 'diff --git a/a.js b/a.js\n');
+    const r = spawnSync(process.execPath, [SCRIPT, '--dir', dir], { encoding: 'utf8' });
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(JSON.parse(r.stdout).contextPack, '');
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
