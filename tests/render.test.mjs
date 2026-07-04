@@ -78,12 +78,12 @@ const standardPlan = {
 
 test('agentCoverage classifies ran vs not-run from the plan, total is the full roster', () => {
   const cov = agentCoverage(standardPlan);
-  assert.equal(cov.total, 21); // 14 dimension reviewers + 7 pipeline agents
+  assert.equal(cov.total, 20); // 14 dimension reviewers + 6 pipeline agents
   const ran = new Set(cov.ran.map((a) => a.name));
   const notRun = new Set(cov.notRun.map((a) => a.name));
   // standard tier: correctness + the gated specialists ran
   assert.ok(ran.has('correctness-reviewer'));
-  assert.ok(ran.has('business-logic-analyzer')); // runs at standard+
+  assert.ok(ran.has('intent-analyzer')); // merged intent agent runs at low+
   // security/concurrency not triggered → not run
   assert.ok(notRun.has('vuln-reviewer'));
   assert.ok(notRun.has('concurrency-reviewer'));
@@ -100,27 +100,35 @@ test('observed dispatch counts are authoritative: RAN follows the count, not the
   const corr = cov.ran.find((a) => a.name === 'correctness-reviewer');
   assert.equal(corr.runs, 5); // observed count wins
   assert.ok(cov.dispatches >= 5);
-  // business-logic-analyzer is planned at standard tier but absent from the observed map → did NOT run
-  assert.ok(cov.notRun.some((a) => a.name === 'business-logic-analyzer'));
-  assert.ok(!cov.ran.some((a) => a.name === 'business-logic-analyzer'));
+  // intent-analyzer is planned at standard tier but absent from the observed map → did NOT run
+  assert.ok(cov.notRun.some((a) => a.name === 'intent-analyzer'));
+  assert.ok(!cov.ran.some((a) => a.name === 'intent-analyzer'));
 });
 
 test('a planned agent that dispatched 0 times is NOT listed as "ran 0×"', () => {
   // regression: the RAN section used the planned `ran` flag while the ×N count used the
   // observed map, so a planned-but-zero-dispatch agent appeared under RAN showing 0×.
-  const cov = agentCoverage(standardPlan, { 'correctness-reviewer': 1, 'intent-harvester': 0 });
+  const cov = agentCoverage(standardPlan, { 'correctness-reviewer': 1, 'intent-analyzer': 0 });
   // no row in the RAN section may show a zero count
   assert.ok(cov.ran.every((a) => a.runs > 0), 'every RAN agent must have a positive dispatch count');
   // the zero-dispatch agent is moved to notRun with an honest reason
-  const ih = cov.notRun.find((a) => a.name === 'intent-harvester');
-  assert.ok(ih, 'intent-harvester (observed 0) belongs under did-not-run');
+  const ih = cov.notRun.find((a) => a.name === 'intent-analyzer');
+  assert.ok(ih, 'intent-analyzer (observed 0) belongs under did-not-run');
   assert.match(ih.reason, /no dispatch/);
+});
+
+test('merged intent-analyzer runs at LOW tier (S3: low+, not standard+)', () => {
+  // regression for the merge: the former business-logic-analyzer was skipped at low; the merged
+  // intent-analyzer must run at low+ so low-tier reviewers still get an intent brief.
+  const lowPlan = { ...standardPlan, tier: 'low' };
+  const cov = agentCoverage(lowPlan); // planned expectation (no observed counts)
+  assert.ok(cov.ran.some((a) => a.name === 'intent-analyzer'), 'intent-analyzer must run at low tier');
 });
 
 test('with no observed counts (trivial inline path), the planned expectation is used', () => {
   const cov = agentCoverage(standardPlan); // empty map → fall back to plan
   assert.ok(cov.ran.some((a) => a.name === 'correctness-reviewer'));
-  assert.ok(cov.ran.some((a) => a.name === 'business-logic-analyzer'));
+  assert.ok(cov.ran.some((a) => a.name === 'intent-analyzer'));
 });
 
 test('agentCoverage flags a trivial change as inline (no subagents)', () => {
@@ -134,7 +142,7 @@ test('reports render an Agents & coverage section in markdown and HTML', () => {
   const coverage = agentCoverage(standardPlan);
   const md = renderReport({ findings, criteria, tier: 'standard', coverage });
   assert.match(md, /## Agents & coverage/);
-  assert.match(md, /of 21 bundled agents ran/);
+  assert.match(md, /of 20 bundled agents ran/);
   assert.match(md, /vuln-reviewer/);
   const html = renderHtml({ findings, criteria, tier: 'standard', coverage });
   assert.match(html, /Agents &amp; coverage/);

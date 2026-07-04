@@ -25,7 +25,7 @@ Every module is one pipeline step, named for its verb (`scan`, `gather`, `triage
 ## Where things live
 
 - **Review dimensions** (`Dn` ids) are defined in `lib/triage.mjs` — `DIMENSION_AGENTS`, `DIMENSION_LABELS`, `TIER_DIMENSIONS`, `OPUS_DIMS`, and the content gates in `planReview()`. Not in `config.schema.json` (it has no dimension enum) and not in `render.mjs` (it imports the maps). To add one, use `/add-reviewer-dimension`.
-- **Bundled agents** live in `agents/`. The dimension reviewers (`*-reviewer.md`) share one finding contract; the pipeline agents (`intent-*`, `triage-classifier`, `business-logic-analyzer`, `*-verifier`, `completeness-critic`, `review-synthesizer`) each use their own JSON shape by design.
+- **Bundled agents** live in `agents/`. The dimension reviewers (`*-reviewer.md`) share one finding contract; the pipeline agents (`intent-*`, `triage-classifier`, `*-verifier`, `completeness-critic`, `review-synthesizer`) each use their own JSON shape by design.
 - **Severity vocabulary is fixed**: `critical | important | minor | suggestion` (lowercase). Never introduce `high`/`med`/`low`/`info`. The full finding contract is enforced by the `dimension-agent-consistency` agent — run it if you touch a reviewer's output.
 - **Review orchestration** is a Workflow (`lib/review-workflow.mjs`), invoked by `commands/review.md`. The main agent only runs the deterministic scripts + the Workflow call; it never assembles the `report.mjs` payload by hand.
 

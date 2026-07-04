@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { expandAspects, findingKey, newCaps, canSpawn, recordSpawn, buildReportPayload, pluginAgent, PLUGIN_NS, inDiffScope, partitionByScope } from '../lib/review-orchestration.mjs';
+import { expandAspects, findingKey, newCaps, canSpawn, recordSpawn, buildReportPayload, pluginAgent, PLUGIN_NS, inDiffScope, partitionByScope, intentBrief } from '../lib/review-orchestration.mjs';
 
 test('expandAspects = dimensions × shards', () => {
   const aspects = expandAspects(
@@ -74,6 +74,11 @@ test('review-workflow.mjs declares a valid meta with 4 phases', () => {
   // triage-classifier and completeness-critic must be actually dispatched (not just listed in render.mjs)
   assert.match(src, /pluginAgent\('triage-classifier'\)/, 'triage-classifier must be dispatched');
   assert.match(src, /pluginAgent\('completeness-critic'\)/, 'completeness-critic must be dispatched');
+  // S3: the two intent agents are merged into one intent-analyzer pass; neither original is dispatched
+  assert.match(src, /pluginAgent\('intent-analyzer'\)/, 'intent-analyzer must be dispatched');
+  assert.doesNotMatch(src, /pluginAgent\('intent-harvester'\)/, 'intent-harvester dispatch must be removed (merged into intent-analyzer)');
+  assert.doesNotMatch(src, /pluginAgent\('business-logic-analyzer'\)/, 'business-logic-analyzer dispatch must be removed (merged into intent-analyzer)');
+  assert.match(src, /function intentBrief\(/, 'intentBrief must be inlined (canonical: lib/review-orchestration.mjs)');
   // triage-classifier is skipped for the trivial tier only (rank 5)
   assert.match(src, /plan\.tier !== 'trivial'/, 'triage-classifier must be guarded for the trivial tier');
   // completeness-critic gates on the exhaustive discovery flag
@@ -114,6 +119,48 @@ test('inlined filterDiff stays in sync with the canonical lib/trim-diff.mjs', as
   // the inlined copy must define the same gate + helpers (kept in sync by hand)
   assert.match(src, /function sectionPath\(/);
   assert.match(src, /const normPath =/);
+});
+
+// --- intent brief (S3: merged intent-analyzer) ---
+test('intentBrief keeps criteria + mismatches + only scrutiny-flagged groups', () => {
+  const intent = {
+    summary: 's', statedIntent: 'stated', derivedIntent: 'derived',
+    acceptanceCriteria: [{ id: 'AC1', text: 'r' }],
+    mismatches: [{ kind: 'missing', text: 'm' }],
+    expectedTests: ['t'], outOfScope: ['o'], extraIntents: ['e'],
+    model: 'domain', assumptions: [{ text: 'a' }], openQuestions: [{ question: 'q' }],
+    groups: [
+      { label: 'primary', kind: 'primary', scrutinize: false },
+      { label: 'drive-by', kind: 'extra', scrutinize: true },
+    ],
+  };
+  const brief = intentBrief(intent);
+  // the reviewer brief must carry acceptanceCriteria + mismatches (S3 acceptance)
+  assert.deepEqual(brief.acceptanceCriteria, intent.acceptanceCriteria);
+  assert.deepEqual(brief.mismatches, intent.mismatches);
+  // only the scrutiny-flagged group survives
+  assert.equal(brief.scrutinize.length, 1);
+  assert.equal(brief.scrutinize[0].label, 'drive-by');
+  // the bulky prose + domain-logic fields are NOT in the compact brief (reserved for deep consumers)
+  assert.equal(brief.statedIntent, undefined);
+  assert.equal(brief.expectedTests, undefined);
+  assert.equal(brief.model, undefined);
+  assert.equal(brief.openQuestions, undefined);
+});
+
+test('intentBrief tolerates a schema miss (non-object) by passing it through', () => {
+  assert.equal(intentBrief('raw prose'), 'raw prose');
+  assert.equal(intentBrief(null), null);
+  // a groups-less object still yields an empty scrutinize list, never a throw
+  assert.deepEqual(intentBrief({ acceptanceCriteria: [] }).scrutinize, []);
+});
+
+test('inlined intentBrief stays in sync with the canonical lib/review-orchestration.mjs', () => {
+  const src = readFileSync(new URL('../lib/review-workflow.mjs', import.meta.url), 'utf8');
+  // the inlined copy must reproduce the canonical scrutinize filter + object-guard
+  assert.match(src, /function intentBrief\(intent\)/);
+  assert.match(src, /\(intent\.groups \?\? \[\]\)\.filter\(\(g\) => g\?\.scrutinize\)/);
+  assert.match(src, /typeof intent !== 'object'/);
 });
 
 test('buildReportPayload assembles all fields', () => {
