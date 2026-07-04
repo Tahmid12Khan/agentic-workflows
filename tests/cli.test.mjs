@@ -313,6 +313,68 @@ test('usage.mjs recurses into nested Workflow subagent transcripts + splits cost
   } finally { rmSync(home, { recursive: true, force: true }); }
 });
 
+test('history.mjs emits the fix/bug prior per changed file from a real repo', () => {
+  const repo = mkdtempSync(join(tmpdir(), 'acr-hist-'));
+  const git = (...a) => execFileSync('git', a, { cwd: repo, stdio: ['pipe', 'pipe', 'pipe'] });
+  try {
+    git('init', '-q');
+    git('config', 'user.email', 't@t'); git('config', 'user.name', 't');
+    writeFileSync(join(repo, 'pay.mjs'), 'export const rate = 1;\n');
+    git('add', '-A'); git('commit', '-qm', 'feat: add pay');
+    writeFileSync(join(repo, 'pay.mjs'), 'export const rate = 2;\n');
+    git('add', '-A'); git('commit', '-qm', 'fix: correct rounding on refund');
+    // now stage a further change and diff it
+    writeFileSync(join(repo, 'pay.mjs'), 'export const rate = 3;\n');
+    writeFileSync(join(repo, 'diff.txt'), execFileSync('git', ['diff'], { cwd: repo, encoding: 'utf8' }));
+    const out = JSON.parse(execFileSync(node, [join(LIB, 'history.mjs'), '--diff', join(repo, 'diff.txt')], { cwd: repo, encoding: 'utf8' }));
+    assert.ok(out.history['pay.mjs'], 'the changed file must carry its history');
+    assert.ok(out.history['pay.mjs'].some((s) => /rounding on refund/.test(s)), 'fix subject present');
+    assert.ok(!out.history['pay.mjs'].some((s) => /add pay/.test(s)), 'non-fix subject excluded');
+  } finally { rmSync(repo, { recursive: true, force: true }); }
+});
+
+test('history.mjs degrades to an empty prior on an empty diff', () => {
+  const repo = mkdtempSync(join(tmpdir(), 'acr-hist-empty-'));
+  try {
+    writeFileSync(join(repo, 'diff.txt'), '');
+    const out = JSON.parse(execFileSync(node, [join(LIB, 'history.mjs'), '--diff', join(repo, 'diff.txt')], { cwd: repo, encoding: 'utf8' }));
+    assert.deepEqual(out.history, {});
+  } finally { rmSync(repo, { recursive: true, force: true }); }
+});
+
+test('test-signal.mjs runs the configured command and reports pass / fail+names / not-configured', () => {
+  const mk = () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'acr-ts-'));
+    mkdirSync(join(cwd, '.adverserial-code-review'), { recursive: true });
+    return cwd;
+  };
+  const write = (cwd, cfg) => writeFileSync(join(cwd, '.adverserial-code-review', 'config.json'), JSON.stringify(cfg));
+  const runTS = (cwd) => JSON.parse(execFileSync(node, [join(LIB, 'test-signal.mjs')], { cwd, encoding: 'utf8' }));
+
+  // passing command
+  let cwd = mk();
+  write(cwd, { tests: { command: `${JSON.stringify(node)} -e "process.exit(0)"` } });
+  let out = runTS(cwd);
+  assert.equal(out.ran, true); assert.equal(out.passed, true); assert.deepEqual(out.failing, []);
+  rmSync(cwd, { recursive: true, force: true });
+
+  // failing command that prints a TAP failure and exits non-zero
+  cwd = mk();
+  write(cwd, { tests: { command: `${JSON.stringify(node)} -e "console.log('not ok 1 - boom'); process.exit(1)"` } });
+  out = runTS(cwd);
+  assert.equal(out.ran, true); assert.equal(out.passed, false);
+  assert.deepEqual(out.failing, ['boom']);
+  rmSync(cwd, { recursive: true, force: true });
+
+  // no command configured → never guessed, ran:false
+  cwd = mk();
+  write(cwd, {});
+  out = runTS(cwd);
+  assert.equal(out.ran, false); assert.equal(out.passed, null);
+  assert.ok(out.notes.some((n) => /not configured/.test(n)));
+  rmSync(cwd, { recursive: true, force: true });
+});
+
 test('usage.mjs returns null when there is no transcript dir (degrade, no panel)', () => {
   const home = mkdtempSync(join(tmpdir(), 'acr-usage-empty-'));
   try {

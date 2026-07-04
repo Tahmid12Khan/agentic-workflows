@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { renderReport, renderVerdict, renderHtml, agentCoverage } from '../lib/render.mjs';
+import { renderReport, renderVerdict, renderHtml, agentCoverage, testSignalText } from '../lib/render.mjs';
 
 const findings = [
   { dimension: 'D3', severity: 'critical', file: 'src/auth.ts', line: 42, title: 'Missing authz', confidence: 95, evidence: 'no role check', fix: 'add requirePermission' },
@@ -20,6 +20,25 @@ test('report groups by severity and includes traceability matrix', () => {
   assert.match(md, /Missing authz/);
   assert.match(md, /AC1/);
   assert.match(md, /only admins can delete/);
+});
+
+// --- S6.4: executed-test signal in the report header ---
+test('testSignalText: null when not run, pass/fail line with capped names otherwise', () => {
+  assert.equal(testSignalText(null), null);
+  assert.equal(testSignalText({ ran: false }), null);
+  assert.equal(testSignalText({ ran: true, passed: true }), 'Tests: passed');
+  assert.equal(testSignalText({ ran: true, passed: false, failing: ['a', 'b'] }), 'Tests: FAILED — a, b');
+  const many = Array.from({ length: 10 }, (_, i) => `t${i}`);
+  assert.equal(testSignalText({ ran: true, passed: false, failing: many }, 2), 'Tests: FAILED — t0, t1, +8 more');
+});
+
+test('the test signal appears in the md + html header only when tests ran', () => {
+  const failed = { ran: true, passed: false, failing: ['auth spec'] };
+  assert.match(renderReport({ findings, criteria, tier: 'high', testSignal: failed }), /Tests: FAILED — auth spec/);
+  assert.match(renderHtml({ findings, criteria, tier: 'high', testSignal: failed }), /Tests: FAILED/);
+  // not run → no line at all
+  assert.doesNotMatch(renderReport({ findings, criteria, tier: 'high' }), /Tests:/);
+  assert.doesNotMatch(renderHtml({ findings, criteria, tier: 'high' }), /Tests:/);
 });
 
 test('only confidence>=80 findings are rendered', () => {

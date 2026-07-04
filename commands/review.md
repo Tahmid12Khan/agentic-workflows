@@ -1,5 +1,5 @@
 ---
-description: Advisory criticality-aware code review of the current branch diff, with bounded adversarial verification. Flags: --base <ref> --comment --gate --tier <t> --dimensions <list> --incremental --exhaustive --no-checkout.
+description: Advisory criticality-aware code review of the current branch diff, with bounded adversarial verification. Flags: --base <ref> --comment --gate --tier <t> --dimensions <list> --incremental --exhaustive --run-tests --no-checkout.
 ---
 Run a systematic, **advisory** code review of the current change. NEVER modify source code — report only. You are a thin dispatcher: run the deterministic scripts, hand the fan-out to the Workflow, relay the result. Do not assemble report payloads by hand.
 
@@ -24,6 +24,8 @@ Resolve base/head, fetch them, and **detach HEAD onto the latest pushed head** v
 - `node "$LIB/gather.mjs" --base <baseRef>` **`> "$SCRATCH/bundle.json"`**. Fetch linked tickets via the ClickUp/Atlassian **MCP** (never API tokens); if a tracker is enabled but its MCP is absent, ask once to connect, else skip. Write any dynamic enrichment (live PR object, fetched ticket, `trackerUsage`) as a small **`$SCRATCH/enrich.json`** — `build-args.mjs` merges it onto the bundle, so you never reshape the big bundle yourself.
 - `git diff <baseRef>..HEAD > "$SCRATCH/diff.txt"` — capture, never read into context.
 - `node "$LIB/context-pack.mjs" --diff "$SCRATCH/diff.txt" > "$SCRATCH/context.txt"` — build the **shared context pack** (enclosing definitions of changed code, import blocks, in-repo callers of changed exports) once, from `$SCRATCH/diff.txt` + the checked-out working tree. `build-args.mjs` attaches it as `args.contextPack`; the Workflow prepends it to every reviewer so they read it before their own Read/Grep. Advisory + degrade-only — on any error it writes an empty/short file and reviewers fall back to Read/Grep. Never read `context.txt` into your own context.
+- `node "$LIB/history.mjs" --diff "$SCRATCH/diff.txt" > "$SCRATCH/history.json"` — the deterministic **bug-history prior** (S6.3): per changed file, the recent `fix`/`bug`/`revert`/`hotfix`/`regression` commit subjects (`git log --oneline`). `build-args.mjs` attaches it as `args.history`; the Workflow rides it on the intent-analyzer + correctness packets so a file with a history of fixes gets extra scrutiny. Zero model cost; degrades to `{}` on a new file / no history.
+- **`--run-tests` only** (off by default; **executes repo code** — never on an untrusted PR): `node "$LIB/test-signal.mjs" > "$SCRATCH/test-signal.json"` — runs the configured `tests.command` (never guessed) after checkout with a timeout, capturing pass/fail + failing test **names** (no logs). `build-args.mjs` attaches it as `args.testSignal`; it feeds the test-adequacy-reviewer (D5) packet and the report header. Skip this step entirely without `--run-tests`.
 - If `learning.enabled`: `node "$LIB/memory.mjs" load <store>` → carry as context.
 - If `scan.deps`: `node "$LIB/scan.mjs"` → seed D15 findings + notes (fold into `enrich.json`).
 - Routing (deterministic): `echo '<grouper-or-empty>' | node "$LIB/route.mjs" scrutiny > "$SCRATCH/scrutiny.json"` and `echo '{"mandatoryChecks":<plan.mandatoryChecks>}' | node "$LIB/route.mjs" checks > "$SCRATCH/checks.json"`.
@@ -31,7 +33,7 @@ Resolve base/head, fetch them, and **detach HEAD onto the latest pushed head** v
 ## 4. Hand the fan-out to the Workflow
 The Workflow owns intent, per-aspect review (`dimensions × shards`), per-finding verification (the unsure findings), resolve, and synthesize. It assembles the report **payload** but no longer renders it (the sandbox can't write files; rendering moves to step 5).
 
-**Assemble args deterministically — do not hand-build it.** Write the small `$SCRATCH/meta.json` `{ "flags": { "comment": <bool>, "gate": <bool>, "incremental": <bool>, "exhaustive": <bool> }, "startedAt": "<STARTED>", "prNumber": <n|null>, "checkout": <step-2 object|null> }`, then:
+**Assemble args deterministically — do not hand-build it.** Write the small `$SCRATCH/meta.json` `{ "flags": { "comment": <bool>, "gate": <bool>, "incremental": <bool>, "exhaustive": <bool>, "runTests": <bool> }, "startedAt": "<STARTED>", "prNumber": <n|null>, "checkout": <step-2 object|null> }`, then:
 
 ```
 node "$LIB/build-args.mjs" --dir "$SCRATCH" > "$SCRATCH/args.json"

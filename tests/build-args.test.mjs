@@ -25,11 +25,21 @@ test('buildArgs: emits exactly the keys review-workflow.mjs destructures', () =>
     meta: { flags: { gate: true }, startedAt: 'T', prNumber: 7, checkout: null },
   });
   assert.deepEqual(Object.keys(out).sort(),
-    ['bundle', 'checkout', 'contextPack', 'diff', 'flags', 'plan', 'prNumber', 'routing', 'shards', 'startedAt'].sort());
+    ['bundle', 'checkout', 'contextPack', 'diff', 'flags', 'history', 'plan', 'prNumber', 'routing', 'shards', 'startedAt', 'testSignal'].sort());
   assert.deepEqual(out.shards, [{ label: 'all', files: ['a.js'] }]); // lifted from plan
   assert.deepEqual(out.routing, { scrutiny: { foo: 1 }, checks: { bar: 2 } });
   assert.equal(out.prNumber, 7);
   assert.equal(out.contextPack, '');   // absent → '' so the workflow prepends nothing
+  assert.deepEqual(out.history, {});   // S6.3 absent → {} so the workflow attaches nothing
+  assert.equal(out.testSignal, null);  // S6.4 absent → null (no --run-tests)
+});
+
+test('buildArgs: S6 history + testSignal are carried through when provided', () => {
+  const history = { 'src/a.js': ['fix: bug'] };
+  const testSignal = { ran: true, passed: false, failing: ['t1'] };
+  const out = buildArgs({ plan: {}, bundle: {}, diff: 'd', history, testSignal });
+  assert.deepEqual(out.history, history);
+  assert.deepEqual(out.testSignal, testSignal);
 });
 
 test('buildArgs: missing meta/routing degrade to safe defaults, not throws', () => {
@@ -55,6 +65,8 @@ test('CLI: assembles from --dir and merges enrich.json onto bundle', () => {
     writeFileSync(join(dir, 'meta.json'), '{"flags":{"gate":true},"prNumber":231}');
     writeFileSync(join(dir, 'enrich.json'), '{"pr":{"number":231},"trackerUsage":{"clickup":true}}');
     writeFileSync(join(dir, 'context.txt'), 'CONTEXT PACK: defs + callers\n');
+    writeFileSync(join(dir, 'history.json'), '{"history":{"a.js":["fix: bug"]},"notes":[]}');
+    writeFileSync(join(dir, 'test-signal.json'), '{"ran":true,"passed":false,"failing":["t1"]}');
     const r = spawnSync(process.execPath, [SCRIPT, '--dir', dir], { encoding: 'utf8' });
     assert.equal(r.status, 0, r.stderr);
     const a = JSON.parse(r.stdout);
@@ -64,6 +76,8 @@ test('CLI: assembles from --dir and merges enrich.json onto bundle', () => {
     assert.equal(a.prNumber, 231);
     assert.equal(a.flags.gate, true);
     assert.match(a.contextPack, /CONTEXT PACK/);    // context.txt attached file→file
+    assert.deepEqual(a.history, { 'a.js': ['fix: bug'] });  // S6.3 unwrapped from history.json
+    assert.equal(a.testSignal.passed, false);              // S6.4 test-signal.json attached
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 

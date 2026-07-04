@@ -372,6 +372,17 @@ test('exhaustivePlan: off by default, on at critical or with --exhaustive', () =
   assert.equal(exhaustivePlan('critical', {}).maxRounds, 2);
 });
 
+// --- S6.1: high-tier completeness screen (cheap, mutually exclusive with the exhaustive critic) ---
+test('exhaustivePlan.completenessScreen: high tier only, never alongside the exhaustive critic', () => {
+  assert.equal(exhaustivePlan('high', {}).completenessScreen, true);         // high, not exhaustive → screen
+  assert.equal(exhaustivePlan('high', {}).completenessCritic, false);        // the full opus critic does NOT run at high
+  assert.equal(exhaustivePlan('standard', {}).completenessScreen, false);    // below high → no screen
+  assert.equal(exhaustivePlan('critical', {}).completenessScreen, false);    // critical runs the full critic instead
+  assert.equal(exhaustivePlan('high', {}, { flag: true }).completenessScreen, false); // --exhaustive supersedes the screen
+  assert.equal(exhaustivePlan('high', {}, { flag: true }).completenessCritic, true);
+  assert.equal(exhaustivePlan('high', { completeness: { screen_on_high: false } }).completenessScreen, false); // opt-out
+});
+
 // --- B7: per-dimension adversarial lens ---
 test('lensFor routes each dimension to its angle of attack, else correctness', () => {
   assert.equal(lensFor({ dimension: 'D3' }).lens, 'security');

@@ -119,6 +119,23 @@
       },
       "additionalProperties": false
     },
+    "tests": {
+      "type": "object",
+      "description": "Test-execution signal (S6.4). With `/review --run-tests` the plugin runs `command` after checkout and feeds pass/fail + failing test NAMES (never logs) to the test-adequacy-reviewer (D5) and the report header. The command is NEVER guessed — it runs only when set here. It EXECUTES repo code; do not use --run-tests on an untrusted PR. Off by default (no --run-tests flag).",
+      "properties": {
+        "command": { "type": "string", "description": "The project's own test command, e.g. 'npm test' or 'pytest -q'." },
+        "timeout_ms": { "type": "integer", "minimum": 1000, "description": "Kill the test command after this many ms (default 600000)." }
+      },
+      "additionalProperties": false
+    },
+    "completeness": {
+      "type": "object",
+      "description": "High-tier completeness SCREEN (S6.1): a cheap haiku false-negative screen that flags dimension/criterion COVERAGE gaps (it sees no diff, so not taint). Runs on the high tier only, and only when the full exhaustive critic is not already running.",
+      "properties": {
+        "screen_on_high": { "type": "boolean", "description": "Run the high-tier completeness screen (default true). Set false to skip the extra haiku pass." }
+      },
+      "additionalProperties": false
+    },
     "checkout": {
       "type": "object",
       "description": "Detach HEAD onto the remote's latest pushed head for the review (restored afterwards), so the reviewers see the most recent pushed code rather than the local checkout. Disable to review the working tree in place.",
