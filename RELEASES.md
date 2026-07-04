@@ -3,7 +3,9 @@
 Release log for the **adversarial-code-review** plugin. Newest first. The forward-looking
 plan lives in [ROADMAP.md](ROADMAP.md). Source-of-truth version: `.claude-plugin/plugin.json`.
 
-## Unreleased
+## v0.14.0
+
+Plan v2 (`plan.md`) — a pressure-tested cost/quality/enforcement pass across the whole pipeline: measurement fixed first, then bounded reviewer spend, tier-aware model selection, enforced diff-scope + verdict + injection invariants, cheap false-negative guards, honest exhaustive scoping, and opt-in incremental review. All changes are additive/opt-in — worst-case rigor is never lowered.
 
 Plan v2 — **S0: fix the measurement instrument** (prerequisite for all later cost work; see `plan.md`).
 
