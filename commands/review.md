@@ -1,5 +1,5 @@
 ---
-description: Advisory criticality-aware code review of the current branch diff, with bounded adversarial verification. Flags: --base <ref> --comment --gate --tier <t> --dimensions <list> --incremental --exhaustive --run-tests --no-checkout.
+description: Advisory criticality-aware code review of the current branch diff, with bounded adversarial verification. Flags: --base <ref> --comment --gate --tier <t> --dimensions <list> --incremental --full --exhaustive --run-tests --no-checkout.
 ---
 Run a systematic, **advisory** code review of the current change. NEVER modify source code — report only. You are a thin dispatcher: run the deterministic scripts, hand the fan-out to the Workflow, relay the result. Do not assemble report payloads by hand.
 
@@ -20,7 +20,7 @@ Resolve base/head, fetch them, and **detach HEAD onto the latest pushed head** v
 ## 3. Deterministic inputs
 **Token discipline — redirect every blob to a file under `$SCRATCH`; never read plan/bundle/diff into context.** Let `SCRATCH` be your scratchpad dir. The diff, plan and bundle are large (often 40–60 KB combined); reading them into context to "inspect" or to hand-assemble args is the main cost sink — don't. Only the small dynamic enrichment (a fetched ticket, the live PR object) ever touches context.
 
-- `node "$LIB/plan.mjs" --base <baseRef>` (pass through `--tier`/`--dimensions`/`--exhaustive`) **`> "$SCRATCH/plan.json"`**. To branch on the tier, read just one field: `TIER=$(node -e 'process.stdout.write(require("$SCRATCH/plan.json").tier)')` — do **not** read the whole file. If `TIER == trivial`: do one quick inline correctness/comment pass, build a minimal payload (still including `plan` + `agentRuns:{}`) and skip to step 5.
+- `node "$LIB/plan.mjs" --base <baseRef>` (pass through `--tier`/`--dimensions`/`--exhaustive`/`--incremental`/`--full`) **`> "$SCRATCH/plan.json"`**. With `--incremental` the plan narrows the reviewed range to only the commits added since the last review (`prevHead..head`) — but only on a fast-forward; a rebase/force-push falls open to the full `base..head` (see `plan.incremental`). `--full` forces the complete review. To branch on the tier, read just one field: `TIER=$(node -e 'process.stdout.write(require("$SCRATCH/plan.json").tier)')` — do **not** read the whole file. If `TIER == trivial`: do one quick inline correctness/comment pass, build a minimal payload (still including `plan` + `agentRuns:{}`) and skip to step 5.
 - `node "$LIB/gather.mjs" --base <baseRef>` **`> "$SCRATCH/bundle.json"`**. Fetch linked tickets via the ClickUp/Atlassian **MCP** (never API tokens); if a tracker is enabled but its MCP is absent, ask once to connect, else skip. Write any dynamic enrichment (live PR object, fetched ticket, `trackerUsage`) as a small **`$SCRATCH/enrich.json`** — `build-args.mjs` merges it onto the bundle, so you never reshape the big bundle yourself.
 - `git diff <baseRef>..HEAD > "$SCRATCH/diff.txt"` — capture, never read into context.
 - `node "$LIB/context-pack.mjs" --diff "$SCRATCH/diff.txt" > "$SCRATCH/context.txt"` — build the **shared context pack** (enclosing definitions of changed code, import blocks, in-repo callers of changed exports) once, from `$SCRATCH/diff.txt` + the checked-out working tree. `build-args.mjs` attaches it as `args.contextPack`; the Workflow prepends it to every reviewer so they read it before their own Read/Grep. Advisory + degrade-only — on any error it writes an empty/short file and reviewers fall back to Read/Grep. Never read `context.txt` into your own context.
@@ -56,7 +56,7 @@ Workflow({ scriptPath: "$LIB/review-workflow.mjs", args: <contents of args.json>
 - Relay `folderPath` + verdict + any `notes` (workflow notes + report.mjs stderr) to the user.
 - `--comment`: `echo '{"findings":[enriched],"head":"<head>","prNumber":<n>,"existingComments":[...]}' | node "$LIB/comments.mjs"` to post inline PR comments (requires `gh`).
 - **Restore HEAD**: if step 2 detached HEAD (`ORIGINAL_REF` set), run `node "$LIB/checkout.mjs" restore --ref "$ORIGINAL_REF"` to put the user back on their original branch. Do this **after** the report is written. If it reports `restored:false`, warn the user they are on a detached HEAD and tell them how to get back (`git checkout <ORIGINAL_REF>`).
-- Incremental state: write `.adverserial-code-review/last-review.json` with this run's finding keys + range.
+- Incremental state: `report.mjs` writes `.adverserial-code-review/last-review.json` (script-written, sha-keyed on the reviewed base/head + this run's findings) — do NOT write it by hand. It is written on every review so a later `--incremental` run has a prior head to narrow from.
 - Notify: if `needsHuman` is non-empty and `notify.ask_on_unresolved`, present those questions as a short numbered list; their answers are saved to `.adverserial-code-review/learnings.json`.
 
 ## Output discipline

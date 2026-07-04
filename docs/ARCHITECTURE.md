@@ -124,6 +124,26 @@ falls back to whatever ref resolves locally. Set `checkout.enabled: false` or pa
 to review the local working tree **in place** — required when reviewing **uncommitted** changes,
 since a checkout only sees committed refs. Config: `checkout` → `{ enabled, remote }`.
 
+### Incremental review (`--incremental`, opt-in)
+
+After every review, `report.mjs` script-writes `.adverserial-code-review/last-review.json` — a
+sha-keyed record of the reviewed `base`/`head`/`range` plus a minimal projection of this run's
+findings. (It is written on every run so the *first* `--incremental` run has a prior head to narrow
+from; it is git-ignored.)
+
+On the next run, `--incremental` asks `plan.mjs` to narrow the reviewed range to only the commits
+added since — `prevHead..head` instead of `base..head` (`resolveIncrementalRange` in `lib/memory.mjs`).
+But the narrowing is **guarded**: it applies **only on a fast-forward advance**
+(`git merge-base --is-ancestor prevHead head`, exit 0). On **any** non-fast-forward — a rebase,
+force-push, or amend (or a missing/corrupt state) — it **fails open to the full `base..head`
+review**, because a rebase is the exact merge-time event most likely to introduce bugs and a stale
+`prevHead..head` would silently drop the rewritten commits. `plan.incremental` records
+`{ requested, applied, prevHead, reason }`. `--full` opts back out and forces the complete review.
+The default is **off**: a plain `/review` always reviews the whole `base..head`.
+
+When `--incremental` is active, `report.mjs` also dedupes the surviving findings against the previous
+run's (`dedupAgainstPrevious`), tagging each **new** vs carried-over — the report marks new findings.
+
 ---
 
 ## The triage brain
@@ -457,6 +477,7 @@ the source or filing a bug.
 | signals → tier / dimensions / models | `lib/triage.mjs` | `planReview`, `baseTier`, `applyRiskMap`, `pickModels` |
 | is this an exhaustive run? | `lib/triage.mjs` | `exhaustivePlan` |
 | big diff → review shards | `lib/shard.mjs` | `shouldShard`, `shardFiles` |
+| incremental range (`--incremental`) + fast-forward guard | `lib/plan.mjs` + `lib/memory.mjs` | `resolveIncrementalRange`, `isAncestor` |
 | which findings to re-verify | `lib/verify.mjs` | `selectForVerification`, `lensFor` |
 | a finding's fate after verify | `lib/verify.mjs` | `resolveVerification`, `partition` |
 | extra-intent scrutiny / forced checks / spawn cap | `lib/route.mjs` | `extraScrutinyTargets`, `forcedChecks`, `recordSpawn` |
@@ -471,6 +492,7 @@ the source or filing a bug.
 | shared context pack (enclosing defs, imports, in-repo callers of changed exports) | `lib/context-pack.mjs` | `enclosingDefinition`, `fileBody`, `parseImports`, `extractExports`, `assemblePack` |
 | latest-code checkout / restore | `lib/checkout.mjs` | `fetchArgs`, `checkoutDetachArgs`, `restoreArgs`, `commitsBehindArgs` |
 | per-project learnings store | `lib/memory.mjs` | `findingKey`, load/record |
+| incremental-review state (`last-review.json`) | `lib/memory.mjs` | `loadLastReview`, `buildLastReview`, `saveLastReview`, `dedupAgainstPrevious` |
 | dependency CVE scan | `lib/scan.mjs` | (CLI) |
 | environment check | `lib/preflight.mjs` | (CLI) |
 | thin dispatcher + Workflow call | `commands/review.md` | runs deterministic scripts (steps 1–3), calls `Workflow({scriptPath:"$LIB/review-workflow.mjs", args})`, relays result |

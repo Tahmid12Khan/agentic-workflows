@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { shouldShard, shardFiles, singleShard } from '../lib/shard.mjs';
 import { verifyPolicy, selectForVerification, resolveVerification, partition, lensFor, firstPassModel, shouldEscalate } from '../lib/verify.mjs';
-import { applyLearnings, dedupAgainstPrevious, recordRun, findingKey, EMPTY } from '../lib/memory.mjs';
+import { applyLearnings, dedupAgainstPrevious, recordRun, findingKey, EMPTY, resolveIncrementalRange, buildLastReview } from '../lib/memory.mjs';
 import { renderHtml } from '../lib/render.mjs';
 import { parseNpmAudit, parsePipAudit } from '../lib/scan.mjs';
 import { extractIssueKeys } from '../lib/gather.mjs';
@@ -148,6 +148,30 @@ test('dedupAgainstPrevious marks new findings for incremental review', () => {
   const now = dedupAgainstPrevious([{ file: 'a.ts', title: 'old' }, { file: 'c.ts', title: 'new' }], prev);
   assert.equal(now.find(f => f.title === 'old').isNew, false);
   assert.equal(now.find(f => f.title === 'new').isNew, true);
+});
+test('resolveIncrementalRange narrows on a fast-forward, fails open otherwise (S9)', () => {
+  const ff = () => true;                       // prevHead is always an ancestor
+  const nonFf = () => false;                   // rebase/force-push
+  const boom = () => { throw new Error('bad object'); };  // prevHead force-pushed away
+
+  const adv = resolveIncrementalRange({ base: 'B', head: 'H', prevHead: 'P', isAncestor: ff });
+  assert.deepEqual(adv, { range: 'P..H', incremental: true, prevHead: 'P', reason: 'fast-forward advance — reviewing only new commits' });
+
+  const reb = resolveIncrementalRange({ base: 'B', head: 'H', prevHead: 'P', isAncestor: nonFf });
+  assert.equal(reb.range, 'B..H');             // full range on a non-fast-forward
+  assert.equal(reb.incremental, false);
+  assert.match(reb.reason, /non-fast-forward/i);
+
+  // no prior state → full; head unchanged → full (avoids an empty prevHead..head); isAncestor throws → fail open
+  assert.equal(resolveIncrementalRange({ base: 'B', head: 'H', prevHead: null, isAncestor: ff }).range, 'B..H');
+  assert.equal(resolveIncrementalRange({ base: 'B', head: 'H', prevHead: 'H', isAncestor: ff }).incremental, false);
+  assert.equal(resolveIncrementalRange({ base: 'B', head: 'H', prevHead: 'P', isAncestor: boom }).incremental, false);
+});
+test('buildLastReview keeps the sha keys + a minimal finding projection', () => {
+  const state = buildLastReview({ base: 'B', head: 'H', range: 'B..H', findings: [{ file: 'a.ts', line: 5, title: 'x', dimension: 'D2', evidence: 'dropped', fix: 'dropped' }] });
+  assert.equal(state.version, 1);
+  assert.equal(state.head, 'H');
+  assert.deepEqual(state.findings, [{ file: 'a.ts', title: 'x', dimension: 'D2' }]);  // only findingKey fields survive
 });
 test('recordRun accumulates recurring counts and open questions', () => {
   const after = recordRun(EMPTY, { reported: [{ file: 'a.ts', title: 'x' }], needsHuman: [{ title: 'unsure?', file: 'b.ts' }], range: 'r' });

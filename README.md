@@ -79,7 +79,8 @@ everything from the interactive `/plugin` menu):
 | `--comment` | Post confidence ≥ 80 findings as inline PR comments — a one-click GitHub `suggestion` block when a reviewer gave an exact fix, else a one-line fix description (needs `gh`). |
 | `--tier <t>` | Force a tier (`trivial`…`critical`). |
 | `--dimensions D2,D3` | Restrict to specific dimensions. |
-| `--incremental` | Only re-spend effort on code new since the last review. |
+| `--incremental` | Narrow the review to only the commits added since the last review (`prevHead..head`) — but **only on a fast-forward**; a rebase/force-push (or missing state) falls open to the full `base..head`, so rewritten commits are never silently skipped. Off by default. |
+| `--full` | Force a complete `base..head` review (opt out of `--incremental`). |
 | `--exhaustive` | Force the Tier C ultrareview-parity passes (completeness critic, D3 taint verifier, and a double run of the correctness + vuln reviewers) at any tier. Costs more tokens; auto-on at `critical`. |
 | `--run-tests` | Run the configured `tests.command` (never guessed) after checkout and feed pass/fail + failing test **names** to the test-adequacy reviewer and the report header. **Executes repo code — never use on an untrusted PR.** Off by default. |
 | `--no-checkout` | Review the local working tree in place instead of detaching onto the remote's latest base/head (use for **uncommitted** local changes). |

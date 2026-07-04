@@ -375,6 +375,84 @@ test('test-signal.mjs runs the configured command and reports pass / fail+names 
   rmSync(cwd, { recursive: true, force: true });
 });
 
+test('plan.mjs --incremental narrows to prevHead..head on a fast-forward, falls open to base..head on a rebase (S9)', () => {
+  const repo = mkdtempSync(join(tmpdir(), 'acr-inc-'));
+  const g = (...a) => execFileSync('git', a, { cwd: repo, stdio: ['pipe', 'pipe', 'pipe'] }).toString();
+  const acrDir = join(repo, '.adverserial-code-review');
+  const writeLast = (o) => { mkdirSync(acrDir, { recursive: true }); writeFileSync(join(acrDir, 'last-review.json'), JSON.stringify(o)); };
+  try {
+    g('init', '-q');
+    g('config', 'user.email', 't@t'); g('config', 'user.name', 't');
+    writeFileSync(join(repo, 'a.mjs'), 'export const a = 1;\n');
+    g('add', '-A'); g('commit', '-qm', 'base');
+    const base = g('rev-parse', 'HEAD').trim();
+    // C1 — the head that was "already reviewed"
+    writeFileSync(join(repo, 'a.mjs'), 'export const a = 2;\n');
+    g('add', '-A'); g('commit', '-qm', 'C1');
+    const c1 = g('rev-parse', 'HEAD').trim();
+    // C2 — a new commit on top → fast-forward advance from C1, touches a NEW file
+    writeFileSync(join(repo, 'b.mjs'), 'export const b = 1;\n');
+    g('add', '-A'); g('commit', '-qm', 'C2');
+    const head = g('rev-parse', 'HEAD').trim();
+
+    // prior review recorded at C1 → --incremental narrows to C1..head (only the new commit's diff)
+    writeLast({ version: 1, base, head: c1, range: `${base}..${c1}`, findings: [] });
+    const ff = JSON.parse(run('plan.mjs', ['--incremental', '--base', base], { cwd: repo }));
+    assert.equal(ff.incremental.applied, true, 'fast-forward advance is incremental');
+    assert.equal(ff.range, `${c1}..${head}`, 'range narrowed to prevHead..head');
+    assert.deepEqual(ff.files, ['b.mjs'], 'only the new commit\'s file is in scope');
+
+    // --full opts back out even with prior state → the complete base..head review
+    const full = JSON.parse(run('plan.mjs', ['--incremental', '--full', '--base', base], { cwd: repo }));
+    assert.equal(full.incremental.applied, false);
+    assert.equal(full.range, `${base}..${head}`);
+
+    // rebase / force-push: rewrite history so the recorded C1 is NOT an ancestor of the new head
+    g('reset', '--hard', base);
+    writeFileSync(join(repo, 'a.mjs'), 'export const a = 99;\n');
+    g('add', '-A'); g('commit', '-qm', 'C1-rewritten');
+    writeFileSync(join(repo, 'b.mjs'), 'export const b = 1;\n');
+    g('add', '-A'); g('commit', '-qm', 'C2-rewritten');
+    const newHead = g('rev-parse', 'HEAD').trim();
+    writeLast({ version: 1, base, head: c1, range: `${base}..${c1}`, findings: [] });  // still points at the orphaned C1
+    const reb = JSON.parse(run('plan.mjs', ['--incremental', '--base', base], { cwd: repo }));
+    assert.equal(reb.incremental.applied, false, 'non-fast-forward must fall open to a full review, never silently skip');
+    assert.equal(reb.range, `${base}..${newHead}`, 'full base..head range on a rebase');
+    assert.match(reb.incremental.reason, /non-fast-forward/i);
+  } finally { rmSync(repo, { recursive: true, force: true }); }
+});
+
+test('report.mjs script-writes last-review.json and marks new findings under --incremental (S9)', () => {
+  const tmp = mkdtempSync(join(tmpdir(), 'acr-inc-report-'));
+  const baseDir = join(tmp, '.adverserial-code-review');
+  try {
+    mkdirSync(baseDir, { recursive: true });
+    // a prior review recorded one finding at an earlier head
+    writeFileSync(join(baseDir, 'last-review.json'), JSON.stringify({ version: 1, base: 'B0', head: 'H0', range: 'B0..H0', findings: [{ file: 'a.ts', title: 'old bug' }] }));
+    const plan = { tier: 'standard', base: 'B1', head: 'H1', range: 'B1..H1', dimensions: ['D2'], dimensionLabels: { D2: 'Correctness' },
+                   dimensionAgents: { D2: 'correctness-reviewer' }, models: { D2: 'sonnet' }, runVerify: false, sharded: false, shards: [], agents: ['correctness-reviewer'] };
+    const payload = {
+      tier: 'standard', range: 'B1..H1', incremental: true,
+      findings: [
+        { dimension: 'D2', severity: 'minor', file: 'a.ts', line: 1, title: 'old bug', confidence: 90 },
+        { dimension: 'D2', severity: 'minor', file: 'b.ts', line: 2, title: 'fresh bug', confidence: 90 },
+      ],
+      gate: { block_on: ['critical'], warn_on: ['high'] },
+      plan, agentRuns: { 'correctness-reviewer': 1 },
+    };
+    const r = runReport(payload, { cwd: tmp, args: ['--base-dir', baseDir] });
+    assert.equal(r.status, 0);
+    // last-review.json re-keyed to this run's head + carries both findings (minimal projection)
+    const last = JSON.parse(readFileSync(join(baseDir, 'last-review.json'), 'utf8'));
+    assert.equal(last.head, 'H1');
+    assert.deepEqual(last.findings.map((f) => f.title).sort(), ['fresh bug', 'old bug']);
+    // the report marks the finding not seen last run as "new"
+    const dateDir = join(baseDir, readdirSync(baseDir).find((d) => d.startsWith('review-')));
+    const runDir = join(dateDir, readdirSync(dateDir)[0]);
+    assert.match(readFileSync(join(runDir, 'review.md'), 'utf8'), /fresh bug\*\* \(D2 · new ·/);
+  } finally { rmSync(tmp, { recursive: true, force: true }); }
+});
+
 test('usage.mjs returns null when there is no transcript dir (degrade, no panel)', () => {
   const home = mkdtempSync(join(tmpdir(), 'acr-usage-empty-'));
   try {
