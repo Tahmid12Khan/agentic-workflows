@@ -88,14 +88,21 @@ test('review-workflow.mjs declares a valid meta with 4 phases', () => {
   assert.match(src, /function resolveVerification\(/, 'resolveVerification must be inlined');
   assert.match(src, /function partition\(/, 'partition must be inlined');
   // verification is bounded by selectForVerification (verify the unsure, not every finding)
-  assert.match(src, /selectForVerification\(rev\.findings/, 'verify must gate through selectForVerification');
+  assert.match(src, /selectForVerification\(findings/, 'verify must gate through selectForVerification');
   // plan.verify is consumed AS RESOLVED (camelCase, from plan.mjs) — merged over defaults, not
   // re-resolved through cleanVerify (which maps only snake_case and would revert custom config).
   assert.match(src, /\{ \.\.\.DEFAULT_VERIFY, \.\.\.\(plan\.verify \?\? \{\}\) \}/, 'policy must merge the resolved plan.verify');
   assert.doesNotMatch(src, /function cleanVerify\(/, 'cleanVerify must NOT be re-inlined — config is resolved once in plan.mjs');
-  // cheap→strong verifier escalation helpers are inlined (canonical: lib/verify.mjs)
-  assert.match(src, /function firstPassModel\(/, 'firstPassModel must be inlined (canonical: lib/verify.mjs)');
-  assert.match(src, /function shouldEscalate\(/, 'shouldEscalate must be inlined (canonical: lib/verify.mjs)');
+  // BATCHED verify (≤ maxVerifierAgents opus groups + 1 reverify guard): findings are grouped by
+  // (lens, file) via the inlined groupForVerification, refuted per group, then a reverify guard runs.
+  assert.match(src, /function groupForVerification\(/, 'groupForVerification must be inlined (canonical: lib/verify.mjs)');
+  assert.match(src, /const VERDICTS_SCHEMA =/, 'batched verifiers must return a verdicts array');
+  assert.match(src, /reverifyGuard/, 'the +1 reverify false-negative guard must run');
+  assert.match(src, /plan\.verify\?\.verifyModel/, 'verify must use the resolved verify model (opus)');
+  assert.match(src, /groupForVerification\(tagged, budget\)/, 'verify must cap agents via the group budget');
+  // the retired per-finding cheap→strong escalation must be gone from the workflow (superseded by batched all-opus)
+  assert.doesNotMatch(src, /function verifyWithEscalation\(/, 'per-finding escalation is retired — batched verify supersedes it');
+  assert.doesNotMatch(src, /function firstPassModel\(/, 'per-finding firstPassModel is retired from the workflow');
   // S2: the shared context pack is destructured from args and prepended to every reviewer packet
   assert.match(src, /const \{ plan, bundle, diff, contextPack,/, 'contextPack must be destructured from args');
   assert.match(src, /const packBlock =/, 'the context pack must be turned into a prepend block');

@@ -3,6 +3,17 @@
 Release log for the **adversarial-code-review** plugin. Newest first. The forward-looking
 plan lives in [ROADMAP.md](ROADMAP.md). Source-of-truth version: `.claude-plugin/plugin.json`.
 
+## v0.15.0
+
+**Batched adversarial verify** — replaces the per-finding cheap→strong verifier escalation with a bounded, all-opus batched path. Selected (unsure) findings are grouped by `(verifier lens, file)` into at most `maxVerifierAgents` groups (per-tier default: 3 low / 5 standard / 8 high & critical); one opus `finding-verifier`/`taint-verifier` per group refutes every finding it holds in a single pass, so the diff is paid once per group instead of once per finding and agent count stops scaling with finding count. Every selected finding is still verified — the cap bounds agent count, never coverage. A single extra opus **reverify guard** re-checks refuted/uncertain hot findings for false negatives, so total verifier agents ≤ N+1 per run.
+
+- `lib/verify.mjs`: new `groupForVerification` (lens-then-file grouping, greedy bin-packing to the seat budget), `distributeSeats`/`binByFile` helpers, per-tier `MAX_VERIFIER_AGENTS_BY_TIER` default, new `maxVerifierAgents`/`verifyModel` policy fields (config keys `verify.max_verifier_agents` / `verify.by_tier.<tier>.max_verifier_agents` / `verify.verify_model`). Legacy cheap→strong fields (`modelFirst`/`modelEscalate`/`escalateDirectSeverity`, `firstPassModel`/`shouldEscalate`) kept for config back-compat and unit tests but no longer wired into the workflow.
+- `lib/plan.mjs`: threads `maxVerifierAgents`/`verifyModel` from the resolved verify policy into the plan.
+- `lib/review-workflow.mjs`: Verify stage now dispatches one batched `finding-verifier`/`taint-verifier` agent per group (plus the reverify guard) instead of one agent per finding.
+- `agents/finding-verifier.md`, `agents/taint-verifier.md`, `agents/correctness-reviewer.md`: updated for the batched-verdict contract.
+- Docs (`README.md`, `docs/ARCHITECTURE.md`, `commands/review.md`) synced to describe the batched verify path.
+- `.claude/skills/release-plugin/SKILL.md`: release commit message now requires a concise summary, not a bare `chore(release): v<new>`.
+
 ## v0.14.0
 
 Plan v2 (`plan.md`) — a pressure-tested cost/quality/enforcement pass across the whole pipeline: measurement fixed first, then bounded reviewer spend, tier-aware model selection, enforced diff-scope + verdict + injection invariants, cheap false-negative guards, honest exhaustive scoping, and opt-in incremental review. All changes are additive/opt-in — worst-case rigor is never lowered.

@@ -31,7 +31,7 @@ Resolve base/head, fetch them, and **detach HEAD onto the latest pushed head** v
 - Routing (deterministic): `echo '<grouper-or-empty>' | node "$LIB/route.mjs" scrutiny > "$SCRATCH/scrutiny.json"` and `echo '{"mandatoryChecks":<plan.mandatoryChecks>}' | node "$LIB/route.mjs" checks > "$SCRATCH/checks.json"`.
 
 ## 4. Hand the fan-out to the Workflow
-The Workflow owns intent, per-aspect review (`dimensions × shards`), per-finding verification (the unsure findings), resolve, and synthesize. It assembles the report **payload** but no longer renders it (the sandbox can't write files; rendering moves to step 5).
+The Workflow owns intent, dimension review (`dimensions × shards`), batched verification of the unsure findings (grouped by lens+file into ≤N opus verifier groups + 1 opus reverify guard, N per tier), resolve, and synthesize. It assembles the report **payload** but no longer renders it (the sandbox can't write files; rendering moves to step 5).
 
 **Assemble args deterministically — do not hand-build it.** Write the small `$SCRATCH/meta.json` `{ "flags": { "comment": <bool>, "gate": <bool>, "incremental": <bool>, "exhaustive": <bool>, "runTests": <bool> }, "startedAt": "<STARTED>", "prNumber": <n|null>, "checkout": <step-2 object|null> }`, then:
 

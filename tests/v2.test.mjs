@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { shouldShard, shardFiles, singleShard } from '../lib/shard.mjs';
-import { verifyPolicy, selectForVerification, resolveVerification, partition, lensFor, firstPassModel, shouldEscalate } from '../lib/verify.mjs';
+import { verifyPolicy, selectForVerification, resolveVerification, partition, lensFor, firstPassModel, shouldEscalate, groupForVerification } from '../lib/verify.mjs';
 import { applyLearnings, dedupAgainstPrevious, recordRun, findingKey, EMPTY, resolveIncrementalRange, buildLastReview } from '../lib/memory.mjs';
 import { renderHtml } from '../lib/render.mjs';
 import { parseNpmAudit, parsePipAudit } from '../lib/scan.mjs';
@@ -80,6 +80,50 @@ test('guard: reverify_below is clamped up to report_confidence (no dead band)', 
   assert.equal(flat.reverifyBelow, 80);
   const perTier = verifyPolicy({ verify: { by_tier: { high: { reverify_below: 60, report_confidence: 80 } } } }, 'high');
   assert.equal(perTier.reverifyBelow, 80);
+});
+
+// --- batched verification budget (per-tier maxVerifierAgents + groupForVerification) ---
+test('verifyPolicy sets a per-tier verifier-agent budget (3/5/8), opus verify model', () => {
+  assert.equal(verifyPolicy({}, 'low').maxVerifierAgents, 3);
+  assert.equal(verifyPolicy({}, 'standard').maxVerifierAgents, 5);
+  assert.equal(verifyPolicy({}, 'high').maxVerifierAgents, 8);
+  assert.equal(verifyPolicy({}, 'critical').maxVerifierAgents, 8);
+  assert.equal(verifyPolicy({}, 'high').verifyModel, 'opus');
+});
+test('maxVerifierAgents: flat config overrides the tier default; by_tier overrides the flat', () => {
+  assert.equal(verifyPolicy({ verify: { max_verifier_agents: 2 } }, 'high').maxVerifierAgents, 2);
+  const cfg = { verify: { max_verifier_agents: 2, by_tier: { high: { max_verifier_agents: 6 } } } };
+  assert.equal(verifyPolicy(cfg, 'high').maxVerifierAgents, 6);
+  assert.equal(verifyPolicy(cfg, 'low').maxVerifierAgents, 2); // flat wins where no by_tier
+});
+test('groupForVerification: one group per file when they fit the budget', () => {
+  const fs = [
+    { file: 'a.ts', line: 1, title: 'x', verifier: 'finding-verifier' },
+    { file: 'a.ts', line: 2, title: 'y', verifier: 'finding-verifier' },
+    { file: 'b.ts', line: 3, title: 'z', verifier: 'finding-verifier' },
+  ];
+  const groups = groupForVerification(fs, 5);
+  assert.equal(groups.length, 2);                                  // a.ts, b.ts — under budget
+  assert.equal(groups.reduce((n, g) => n + g.findings.length, 0), 3); // every finding grouped
+});
+test('groupForVerification: over budget merges files but keeps every finding (coverage preserved)', () => {
+  const fs = Array.from({ length: 10 }, (_, i) => ({ file: `f${i}.ts`, line: i, title: `t${i}`, verifier: 'finding-verifier' }));
+  const groups = groupForVerification(fs, 3);
+  assert.ok(groups.length <= 3, `got ${groups.length} groups`);
+  assert.equal(groups.reduce((n, g) => n + g.findings.length, 0), 10); // nothing dropped
+});
+test('groupForVerification: lens separation — taint never merges with generic', () => {
+  const fs = [
+    { file: 'a.ts', line: 1, title: 'x', verifier: 'finding-verifier' },
+    { file: 'a.ts', line: 2, title: 'sqli', verifier: 'taint-verifier' },
+  ];
+  const groups = groupForVerification(fs, 5);
+  assert.equal(groups.length, 2);
+  assert.ok(groups.every((g) => new Set(g.findings.map((f) => f.verifier)).size === 1));
+});
+test('groupForVerification is deterministic (same input → same grouping)', () => {
+  const fs = Array.from({ length: 7 }, (_, i) => ({ file: `f${i % 3}.ts`, line: i, title: `t${i}`, verifier: 'finding-verifier' }));
+  assert.deepEqual(groupForVerification(fs, 2), groupForVerification(fs, 2));
 });
 
 // --- cheap→strong verifier escalation ---

@@ -36,11 +36,11 @@ Run `/sync-docs` (or do it by hand) so `README.md` and `docs/ARCHITECTURE.md` ma
 
 ## 5. Commit and tag
 
-Conventional Commits, no attribution trailers:
+Conventional Commits, no attribution trailers. Summary = concise phrase of what shipped (not a changelog dump):
 
 ```
 git add -A
-git commit -m "chore(release): v<new>"
+git commit -m "chore(release): v<new>: <concise summary of changes>"
 git tag v<new>
 ```
 
@@ -52,4 +52,4 @@ Push only when the user asks (`git push && git push --tags`). Don't push unpromp
 - [ ] `RELEASES.md` has a `## v<new>` section; `ROADMAP.md` "Next" pruned of anything shipped
 - [ ] `/sync-docs` run — README + ARCHITECTURE current
 - [ ] `npm test` green; no version drift
-- [ ] `chore(release): v<new>` commit + `v<new>` tag
+- [ ] `chore(release): v<new>: <summary>` commit + `v<new>` tag

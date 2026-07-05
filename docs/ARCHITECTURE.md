@@ -7,7 +7,7 @@ reading a line of source.
 
 > **One-sentence summary:** it reads a diff, measures how dangerous the change is,
 > reviews only the dimensions that matter at a depth that matches the risk,
-> adversarially re-checks the unsure findings with their own verifier on non-trivial tiers (bounded to 3 looks),
+> adversarially re-checks the unsure findings on non-trivial tiers (batched into ≤ N opus verifier groups + 1 reverify guard),
 > and reports the result — **it never edits your code.**
 
 - New here? Start at [Mental model](#mental-model).
@@ -62,7 +62,7 @@ Every review runs the same eight stages. Stages 1–3 are run by the main agent 
 flowchart TD
   A["1 · INTAKE<br/><i>preflight.mjs · checkout.mjs</i><br/>verify env; detach HEAD onto<br/>the remote's latest head (restored after)"]
   B["2 · CONTEXT<br/><i>gather.mjs · memory.mjs · scan.mjs</i><br/>PR body, existing comments,<br/>ClickUp/Jira (via MCP), learnings, CVE scan"]
-  C["3 · TRIAGE<br/><i>plan.mjs + triage.mjs</i><br/>diff → tier, dimensions, models,<br/>shards, verify/escalation budgets"]
+  C["3 · TRIAGE<br/><i>plan.mjs + triage.mjs</i><br/>diff → tier, dimensions, models,<br/>shards, verify budget (maxVerifierAgents)"]
   D["4 · INTENT<br/><i>triage-classifier · intent-analyzer</i><br/>tier sanity-check, stated vs actual,<br/>primary vs extra, domain logic, open questions"]
   E["5 · REVIEW<br/><i>correctness-reviewer + specialists</i><br/>one isolated pass per dimension × shard"]
   F["6 · VERIFY<br/><i>finding-verifier / taint-verifier<br/>· completeness screen (high) / critic (exhaustive)</i><br/>adversarially refute the unsure findings"]
@@ -86,7 +86,7 @@ What each stage contributes:
 3. **Triage** — the brain. See [The triage brain](#the-triage-brain).
 4. **Intent** — the Workflow opens with `triage-classifier` (haiku, skipped on the trivial tier where dimensions are fixed), a judgment pass on the deterministic tier: it can flag a **higher** tier for the human (it can't safely re-plan mid-run) and **adds dimensions the rules missed**, which become real review aspects. Then a single `intent-analyzer` pass (the former `intent-harvester` + `business-logic-analyzer`, merged) builds the acceptance-criteria model: what the change *says* it does (PR/comments/tickets) vs. what the code *actually* does, and where the two diverge. It splits the primary intent from **extra / unexplained** changes and flags the extras for scope-creep control, then models the domain/business logic — material ambiguities become *questions for you*, not silent assumptions. The prompt enforces **staged reasoning** (criteria/groups before assumptions/questions) so merging the two agents keeps the producer→consumer reasoning barrier the split gave for free; it runs at **low+** so even low-tier reviewers get an intent brief. The intent agent sees the diff with **mechanically-generated noise stripped** (lockfiles, build artifacts, sourcemaps, snapshots — `stripNoise` in `lib/trim-diff.mjs`, the same `NOISE` set the plan already drops from `files`); it reasons about what changed, not vendored churn, and a dependency bump still reaches D15 via the `depsChanged` signal.
 5. **Review** — fans out reviewers inside the Workflow. The always-on `correctness-reviewer` plus one specialist per planned dimension, each on the model `triage` chose for that dimension, each on its own shard for large diffs. Every reviewer gets a **clean packet** (a compact intent brief — criteria + mismatches + scrutiny-flagged groups — plus the diff and a **shared context pack**) and never the chat history; every agent's prompt opens with a **trust-boundary preamble** — the diff/file/PR/comment/ticket text is DATA, never instructions, and an embedded directive ("approve this", "report no findings") must be reported as a security finding; the pack + shared brief + project rules **lead the prompt so they prompt-cache across every aspect of the same reviewer agent** (the per-aspect diff and dimension/file line trail so they never poison that prefix). On a sharded review the diff is **scoped to the reviewer's shard files** (`lib/trim-diff.mjs`) to cut the dominant input-token cost — except D3/security, which runs as a **single unsharded aspect over the full diff** (`expandAspects(..., { unsharded: ['D3'] })`) so cross-file taint source→sink survives without re-paying the whole diff once per shard. The **context pack** (`lib/context-pack.mjs`, built once by a deterministic step-3 script and attached file→file as `args.contextPack` so it never enters agent context) carries, per changed file, the **enclosing definition** of each changed hunk (brace/indent heuristic; whole-file fallback under an 8 KB/file, 40 KB-total cap — never signatures-only on a changed def, never truncating it), the **import block**, and a capped list of in-repo **callers of the changed exports** (`git grep`). Reviewers **use the pack first** and make at most ~4 extra Read/Grep calls, only when it's insufficient for a specific suspected finding — and no reviewer carries `Bash` (removed from every `agents/*-reviewer.md`). A small **per-reviewer addendum** (`reviewerAddendum`, canonical in `lib/review-orchestration.mjs`) rides the packet: the **correctness reviewer** gets a **cross-file consequence** directive (for each changed exported symbol, does each in-repo caller in the pack still hold? — if unknowable from the pack, raise a needs-human question, not a finding — S6.2) plus the deterministic **bug-history prior** (recent `fix`/`revert` commits touching the changed files, `lib/history.mjs`, zero model cost — S6.3); the **test-adequacy reviewer** gets the **executed-test signal** (pass/fail + failing test names) when `--run-tests` fed one in (S6.4). Consequence findings are usually out-of-diff and the diff-scope filter demotes them to advisory by design.
-6. **Verify (the unsure findings)** — the Workflow spawns a **separate verification agent for each unsure finding** — low-confidence, flagged uncertain, or high-severity on a risk path (`selectForVerification`) — on tiers where `plan.runVerify` is true; confident, non-risk findings are trusted and ship at the ≥80 gate. Each verifier attacks from a dimension-appropriate lens on a diff **scoped to the finding's own file** (`verifierDiff`, the same `lib/trim-diff.mjs` trim the reviewers use) — except the D3 `taint-verifier`, which keeps the full diff so cross-file source→sink survives — and **escalates cheap→strong** (`sonnet` first, `opus` on an uncertain/hot-refuted verdict; `critical` straight to `opus`); the ≤ 3 subagents/aspect cap is enforced in code. See [Bounded adversarial verification](#bounded-adversarial-verification). On the **high** tier a cheap **completeness screen** (`plan.discovery.completenessScreen`, S6.1) reuses `completeness-critic` on **haiku** with a `mode: screen` packet — coverage metadata only (which dimensions ran + the finding titles + the raw intent-analyzer output, **no diff**), so it flags dimension/criterion coverage gaps but never claims untraced-taint — and re-dispatches at most **2** targeted reviewers. On **exhaustive** reviews (`plan.discovery.completenessCritic`, auto at `critical`) the full `completeness-critic` (opus, **with** the diff) instead hunts for what the fan-out **missed** — an unrun dimension, an uncovered criterion, an untraced input→sink — and re-dispatches up to 6 targeted reviewers. The two never both run (the screen is skipped when the exhaustive critic runs); either way the new findings (deduped against the existing set via the shared `reDispatchGaps`) re-enter Verify before synthesis.
+6. **Verify (batched)** — the Workflow **groups the unsure findings** — low-confidence, flagged uncertain, or high-severity on a risk path (`selectForVerification`) — by **(verifier lens, file)** into **≤ `maxVerifierAgents` groups** (`groupForVerification`; per tier 3/5/8) on tiers where `plan.runVerify` is true; confident, non-risk findings are trusted and ship at the ≥80 gate. One **opus** agent per group refutes every finding it holds and returns a verdict per finding, on a diff **scoped to the group's files** (`filterDiff`) — except the D3 `taint-verifier`, which keeps the full diff so cross-file source→sink survives. Then a **+1 opus reverify guard** re-checks the refuted/uncertain hot findings for false negatives, so total verifier agents **≤ N+1**. The cap bounds agent count, not coverage. See [Bounded adversarial verification](#bounded-adversarial-verification). On the **high** tier a cheap **completeness screen** (`plan.discovery.completenessScreen`, S6.1) reuses `completeness-critic` on **haiku** with a `mode: screen` packet — coverage metadata only (which dimensions ran + the finding titles + the raw intent-analyzer output, **no diff**), so it flags dimension/criterion coverage gaps but never claims untraced-taint — and re-dispatches at most **2** targeted reviewers. On **exhaustive** reviews (`plan.discovery.completenessCritic`, auto at `critical`) the full `completeness-critic` (opus, **with** the diff) instead hunts for what the fan-out **missed** — an unrun dimension, an uncovered criterion, an untraced input→sink — and re-dispatches up to 6 targeted reviewers. The two never both run (the screen is skipped when the exhaustive critic runs); either way the new findings (deduped against the existing set via the shared `reDispatchGaps`) re-enter Verify before synthesis.
 7. **Synthesize** — `review-synthesizer` dedupes, builds the requirement→code traceability matrix, separates confident findings from open questions, and emits one verdict — a one-sentence headline plus a short bulleted `summaryPoints` list (the report renders bullets, not a wall paragraph).
 8. **Deliver** — the Workflow returns the assembled report **payload**; the `/review` command then runs `report.mjs` **directly via node** (no executor agent — the Workflow sandbox can't write files, and broadcasting the whole payload to a model that only shells out is pure input-token waste). `report.mjs` writes `review.md` + `review.html` into a per-run folder `.adverserial-code-review/review-<YYYY-MM-DD>/review-<n>[-pr-<num>]/` (an outer folder per day, an inner folder per run; each report names the PR and its start/finish times). It exposes `generateReport()` as a function that degrades soft failures (memory, file write) to notes and never crashes the run; only a missing-plan/agentRuns contract violation or a `--gate` BLOCK exits non-zero. Before assembly the synthesized findings pass a **diff-scope filter** (`buildDiffIndex` + `partitionByScope`, inlined; canonical in `lib/trim-diff.mjs` / `lib/review-orchestration.mjs`): a finding whose **file** is not in the change is demoted to an advisory "Out-of-scope observations" section — shown but excluded from the verdict, gate, and `--comment`. Demotion keys on the file, never a missing line, so line-less (D1/intent) and deletion findings stay gated; `diff_scope.slack` (default 3) tolerates anchors just above/below a hunk. The verdict itself (`renderVerdict`, now tier-aware) applies a **sanity floor**: a `high`/`critical` change with zero surviving findings is emitted as a non-blocking `WARN`, never a silent `APPROVE`. The report **always** includes an "Agents & coverage" section (Ran / Did not run), and — when `--run-tests` ran the suite — a one-line **test signal** in the header (pass, or FAIL with the failing test names; `testSignalText`). `review.html` carries a top-left **usage panel** and `review.md` a matching **Cost** section — `report.mjs` calls `lib/usage.mjs` (`computeReviewUsage`) to sum this run's token usage + USD cost from the session transcripts within the review's time window (`payload.startedAt` → now). It walks the orchestrator's `<session>.jsonl` plus the **whole `<session>/subagents/` subtree recursively** — Workflow reviewer transcripts nest under `subagents/workflows/wf_*/agent-*.jsonl`, which the earlier direct-children-only scan silently dropped (reading ~0 reviewer cost). The result carries an aggregate **cache-hit%** and a **per-(scope, model-family) breakdown** (orchestrator vs the `subagents` fan-out, by model) so the report shows what dominates spend; per-*dimension* attribution is not derivable from the transcripts (subagents stamp a generic `agentType` and only an opaque `agentId`) and would need a dispatch-time manifest the Workflow sandbox cannot write. Best-effort, degrades to a note and no panel/section when transcripts aren't reachable. `report.mjs` accepts no `--out`/`--html` flags; the per-run folder is always written. Terminal summary + gate exit code (with `--gate`); `--comment` posts inline PR comments via `comments.mjs` — a one-click GitHub `suggestion` block when a reviewer set an exact `fixCode` (single-line, or multi-line via `endLine`), else a one-line fix description; the run is recorded to memory; unresolved questions are surfaced to you.
 
@@ -233,7 +233,7 @@ a migration (D6 → opus whenever the `migration` risk path is detected, at any 
 via the already-raised tier — `risk_map`/`--tier` floors. Everything else runs on the tier's
 base model (`haiku` at trivial, otherwise `sonnet`). The matrix is config-overridable via the
 `models` block (`opus_dims`, `opus_min_tier`, `by_tier`). The adversarial verifier runs on
-its own cheap→strong ladder (see below), independent of this matrix.
+a single model (`verify.verify_model`, default `opus`; see below), independent of this matrix.
 
 ---
 
@@ -257,12 +257,23 @@ reviews stay cheap — and the verification pass runs on every non-trivial tier 
 ## Bounded adversarial verification
 
 The plugin doesn't trust its own first pass — but it doesn't re-run the whole review
-either. On every non-trivial tier (`plan.runVerify` true) the Workflow refutes the
-**unsure findings** — each with its **own separate verifier agent** — and looks at any one
-aspect **at most three times total** (1 review + ≤ 2 verifier passes), with **at most
-3 subagents** on it. Both caps are enforced in code (`verify.mjs` slices verdicts to the
-budget; the per-aspect spawn ledger in `lib/review-workflow.mjs` — `canSpawn`/`recordSpawn`,
-canonically `lib/review-orchestration.mjs` — must clear before every dispatch).
+either, and it doesn't spawn one agent per finding. On every non-trivial tier
+(`plan.runVerify` true) the Workflow refutes the **unsure findings** in a **batched** pass:
+they are grouped by **(verifier lens, file)** into **at most `maxVerifierAgents` groups**
+(`groupForVerification`, a per-tier budget — **3** low / **5** standard / **8** high & critical),
+one **opus** agent per group refutes every finding it holds in a single pass, and then **one
+extra opus reverify guard** re-checks the refuted/uncertain hot findings for false negatives —
+so **total verifier agents ≤ N+1**. Every selected finding lands in exactly one group, so the
+cap bounds **agent count, never coverage**. The budget is resolved in code (`verifyPolicy` →
+`plan.verify.maxVerifierAgents`) and enforced by `groupForVerification` (merging file-groups to
+fit); all verifier agents run on `plan.verify.verifyModel` (default `opus`).
+
+> **Why batched, all-opus?** When agent count is already hard-capped, the old per-finding
+> cheap→strong ladder (`sonnet` first, escalate to `opus`) buys little: output tokens dominate
+> cost and aren't cacheable, and same-prefix per-finding verifiers ran concurrently so they
+> couldn't share each other's prompt cache. Paying `opus` on a handful of batched groups — each
+> reading its diff once — is both cheaper and stronger. `firstPassModel`/`shouldEscalate` remain
+> in `lib/verify.mjs` for config back-compat but are no longer used by the workflow.
 
 ### Which findings get a second look (`selectForVerification`)
 
@@ -301,15 +312,32 @@ spots don't survive where the cost-of-miss is highest:
 | D4 / D10 / D11 / D14 | error path / contract break / illegal state / visibility | finding-verifier |
 | anything else | re-read the real code path on the changed lines | finding-verifier |
 
-### Which model verifies (cheap→strong escalation, `firstPassModel` / `shouldEscalate`)
+### How the agent budget is spent (`groupForVerification` + the reverify guard)
 
-The verifier spends the cheap model first and the strong model only where it earns its cost:
+Batching, not escalation, is the cost lever. `groupForVerification` (pure + unit-tested in
+`lib/verify.mjs`, inlined into the Workflow) takes the selected findings, each tagged with its
+verifier lens, and produces **≤ `maxVerifierAgents` groups**:
 
-- **`firstPassModel`** — a `critical` finding (configurable via `verify.escalate_direct_severity`) skips the cheap pass and is refuted directly on the strong model (`verify.model_escalate`, default `opus`); everything else gets the cheap model first (`verify.model_first`, default `sonnet`).
-- **`shouldEscalate`** — after a cheap pass, escalate to the strong model when the cheap verdict can't stand alone: it was `uncertain`, or it `refuted` a hot (`critical`/`important`/`high`) finding — never drop a hot finding on a single cheap refuter. A clean confirm/refute of a non-hot finding stands as-is.
-- On escalation the **strong verdict is authoritative** — the cheap one is discarded (a single verdict still feeds `resolveVerification`). Escalation spends one more of the ≤ 3-subagents-per-aspect budget, so it stays inside the same cap.
+- **Lens first.** Findings are partitioned by verifier (`taint-verifier` for D3 taint,
+  `finding-verifier` otherwise) — a security finding is traced as taint, never merged into a
+  generic re-read. Lens separation always holds (each lens gets ≥1 seat).
+- **Then by file.** Within a lens, findings group by file so the group's diff hunk is read
+  once. The `taint-verifier` keeps the **full diff** (cross-file source→sink); a generic group
+  is file-scoped (`filterDiff`).
+- **Merge to fit.** If file-groups exceed the seats allotted to a lens, the smallest are merged
+  (greedy bin-packing) so every finding still lands in exactly one group. The cap bounds agent
+  count, never coverage. Deterministic (no `Date`/random; stable index tie-breaks).
 
-Both helpers are pure + unit-tested in `lib/verify.mjs` and inlined into the Workflow. The policy itself is resolved **once** in `plan.mjs` (`verifyPolicy(config, plan.tier)` → `plan.verify`, camelCase); the Workflow sandbox consumes that resolved object directly and never re-parses raw config.
+Each group runs on `plan.verify.verifyModel` (default `opus`) and returns a `verdicts[]` keyed
+by finding id. Then the **+1 reverify guard** (one more opus agent) re-examines only the
+refuted/uncertain **hot or low-confidence** findings with the bias **inverted** — uphold a
+finding as `real` unless the refutation clearly holds on the changed lines — because a
+wrongly-dropped real bug is the costly miss. Its corrected verdicts overwrite the first pass.
+Total verifier agents per run: **≤ N+1**.
+
+The policy is resolved **once** in `plan.mjs` (`verifyPolicy(config, plan.tier)` → `plan.verify`,
+camelCase, incl. the per-tier `maxVerifierAgents` default); the Workflow sandbox consumes that
+resolved object directly and never re-parses raw config.
 
 **Per-tier verify budget (`verify.by_tier.<tier>`).** `verifyPolicy` takes the resolved
 tier and layers `verify.by_tier.<tier>` over the flat keys, so a project can spend a
@@ -370,7 +398,7 @@ sequenceDiagram
 
   Note over R: double run — correctness + vuln reviewers<br/>run twice; union + dedupe by file:line:title
   R->>V: unioned findings
-  Note over V: taint pass — D3 findings → taint-verifier<br/>+ cheap→strong model_escalate (the real levers)
+  Note over V: batched verify — ≤N opus groups by (lens, file)<br/>+ 1 reverify guard; D3 → taint-verifier
   V->>S: kept findings
   S->>CC: acceptance criteria + kept findings + dims run + risk paths
   Note over CC: false-negative guard — what did we MISS?<br/>(max 6 bounded gaps, each a targeted re-dispatch)
@@ -380,12 +408,12 @@ sequenceDiagram
 
 The three passes:
 
-- **double run (S7.1)** — the correctness + vuln reviewers (the highest cost-of-miss dimensions) each run **twice**, as two independent passes; their findings are unioned and deduped by `file:line:title` (`dedupeFindings`, deterministic) **before** Verify, so a finding both passes agree on is verified once. Two independent samples catch a miss a single sample would drop. This is a **real** decorrelation lever; with the verifier's cheap→strong `model_escalate` it is the only one that survived honest scoping — v1's "withhold findings-so-far from later reviewers" is already the default (reviewers never see prior findings) and "shard in reverse order" is inert (D3 is unsharded, small diffs are single-shard). It is intentionally uncached and intentionally spends more — an exhaustive-only trade.
+- **double run (S7.1)** — the correctness + vuln reviewers (the highest cost-of-miss dimensions) each run **twice**, as two independent passes; their findings are unioned and deduped by `file:line:title` (`dedupeFindings`, deterministic) **before** Verify, so a finding both passes agree on is verified once. Two independent samples catch a miss a single sample would drop. This is a **real** decorrelation lever; alongside the batched all-opus verify + reverify guard it is the only one that survived honest scoping — v1's "withhold findings-so-far from later reviewers" is already the default (reviewers never see prior findings) and "shard in reverse order" is inert (D3 is unsharded, small diffs are single-shard). It is intentionally uncached and intentionally spends more — an exhaustive-only trade.
 - **taint pass** — D3 security findings route to the data-flow `taint-verifier` instead of the generic verifier.
 - **completeness-critic** — runs *after* synthesis, aimed at what the review **missed** (an unrun dimension, an uncovered criterion). Returns ≤ 6 bounded gaps, each a concrete re-dispatch. It does **not** loop.
 
-Every re-dispatch — in every pass — still clears the same spawn ledger, so the per-aspect
-cap (≤ 3) holds.
+Re-dispatched gaps re-enter the same batched Verify (`verifyFindings` with its own group
+budget, no reverify guard — the gap set is already tiny).
 
 > **Retired (S7.2).** Earlier docs described *generative verify* (a verifier emitting adjacent
 > findings) and *loop-until-dry* (`max_discovery_rounds` re-sweeps until a dry round). Neither was
@@ -449,8 +477,8 @@ optional and falls back to a sensible default.
 | `project_rules` | house rules fed into every reviewer packet (drives D12). |
 | `intent_sources` | toggle PR / commits / pr_comments / clickup / jira as intent inputs. |
 | `gate` | `block_on` / `warn_on` severity lists → the `APPROVE`/`WARN`/`BLOCK` verdict. |
-| `verify` | bounded-verify policy: passes/aspect, subagents/aspect, `reverify_below`, `report_confidence`, `escalate_uncertain`, the cheap→strong escalation (`model_first`, `model_escalate`, `escalate_direct_severity`), and `by_tier.<tier>` per-tier overrides (defaults 80/80 every tier; `reverify_below` clamped up to `report_confidence`). |
-| `escalation` | spawn-on-doubt cap (subagents per aspect). |
+| `verify` | batched-verify policy: `max_verifier_agents` (the per-run group budget; per-tier default 3/5/8) and `verify_model` (default `opus`), the `reverify_below`/`report_confidence` gate bars, `escalate_uncertain` (the needs-human gate in `resolveVerification`), and `by_tier.<tier>` per-tier overrides (defaults 80/80 every tier; `reverify_below` clamped up to `report_confidence`). The legacy `model_first`/`model_escalate`/`escalate_direct_severity` keys are still parsed but no longer used by the workflow (batched all-opus supersedes them). |
+| `escalation` | legacy per-aspect subagent cap — no longer consumed by the batched verify path. |
 | `large_diff` | `shard_threshold_loc`, `max_shards`. |
 | `scan` | run `deps` / `tests` / `lint` tools when available (advisory). |
 | `checkout` | detach HEAD onto the remote's latest head for the review (restored afterward): `enabled`, `remote`. |
@@ -507,7 +535,7 @@ the source or filing a bug.
 - **False-positive control** — confidence ≥ 80, adversarial verify with per-dimension lenses, accepted-FP memory.
 - **Doubt is surfaced, not hidden** — unresolved findings (and lone refutations of high-severity findings) go to "needs human".
 - **Changed lines only** — pre-existing issues outside the diff are not flagged.
-- **Bounded cost** — model tiering + ≤ 3 looks / subagents per aspect.
+- **Bounded cost** — model tiering + a per-tier verifier-agent budget (≤ N+1 batched verifier agents per run).
 
 ---
 
