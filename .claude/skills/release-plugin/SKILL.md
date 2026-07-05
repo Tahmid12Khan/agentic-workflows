@@ -34,7 +34,7 @@ Run `/sync-docs` (or do it by hand) so `README.md` and `docs/ARCHITECTURE.md` ma
 - `npm test` — must be green.
 - Confirm version sync: `node .claude/hooks/check-versions.mjs` reads its locations; or just grep the four fields and eyeball that they match. No drift.
 
-## 5. Commit and tag
+## 5. Commit, tag, and push
 
 Conventional Commits, no attribution trailers. Summary = concise phrase of what shipped (not a changelog dump):
 
@@ -42,9 +42,8 @@ Conventional Commits, no attribution trailers. Summary = concise phrase of what 
 git add -A
 git commit -m "chore(release): v<new>: <concise summary of changes>"
 git tag v<new>
+git push && git push --tags
 ```
-
-Push only when the user asks (`git push && git push --tags`). Don't push unprompted.
 
 ## Checklist
 
@@ -52,4 +51,4 @@ Push only when the user asks (`git push && git push --tags`). Don't push unpromp
 - [ ] `RELEASES.md` has a `## v<new>` section; `ROADMAP.md` "Next" pruned of anything shipped
 - [ ] `/sync-docs` run — README + ARCHITECTURE current
 - [ ] `npm test` green; no version drift
-- [ ] `chore(release): v<new>: <summary>` commit + `v<new>` tag
+- [ ] `chore(release): v<new>: <summary>` commit + `v<new>` tag + push
