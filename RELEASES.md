@@ -3,6 +3,17 @@
 Release log for the **adversarial-code-review** plugin. Newest first. The forward-looking
 plan lives in [ROADMAP.md](ROADMAP.md). Source-of-truth version: `.claude-plugin/plugin.json`.
 
+## v0.18.0
+
+**Three cost levers — sonnet-first verify + per-file diff slices + optional fan-out trim — and a completeness screen on every tier.**
+
+- **Sonnet-first batched verify.** The first-pass refuter groups now run on the cheap model (`verify.model_first`, default `sonnet`) instead of all-opus; only a group holding a **critical** finding (`verify.escalate_direct_severity`) and the `taint-verifier` go straight to `opus`. The asymmetry is deliberate — a cheap false *confirm* only lets a spurious finding through (a human sees it), whereas a cheap false *refute* would silently miss a real bug, so the **+1 opus reverify guard** re-checks the refuted/uncertain hot findings with the bias inverted. Opus thus adjudicates every costly kill while the bulk refutation stays cheap. `firstPassModel`/`shouldEscalate` remain in `lib/verify.mjs` for the legacy per-finding path + config back-compat.
+- **Per-file diff slicing.** `build-args.mjs` writes each changed file's hunks to its own slice on disk (`splitByFile` → `slices/*.patch`, mapped in `args.sliceIndex`), so a file-scoped reviewer or verifier group `Read`s only its files' slices (`diffReadFor`) instead of the whole diff — the dominant input-token cost, otherwise paid in full once per agent. A pure optimization: a missing slice (rename/binary/noise, or slicing skipped) falls back to the full `diffPath`, and D3/taint keeps the full diff so cross-file source→sink survives.
+- **Optional fan-out trim (`config.fanout`, off by default) — the agent-count lever.** With `fanout.trim: true`, the content-gated specialists a change's signals add *beyond* its tier's base set can be trimmed: advisory specialists (`fanout.defer_dims`, default perf `D9` + a11y `D17`) are deferred until `fanout.defer_below` (default `high`), and the remaining net-new specialists are capped at `fanout.max_added` (default uncapped), keeping the highest-priority ones (`fanout.keep_order`). Unlike the two levers above it **trades coverage for cost**, so it defaults off. Base-tier dimensions and `always_dims` are never trimmed, the **critical** tier is exempt entirely, and every dropped dimension is named in the report's **Did not run** section (`plan.trimmed`) — never a silent cut. This project's own `config.json` opts in (`{ "trim": true, "max_added": 3 }`).
+- **Completeness screen on every workflow tier.** The cheap x1 haiku coverage-gap screen (metadata only, no diff) now runs on **low/standard/high**, not just high, whenever the full exhaustive critic isn't. Gap re-dispatch budget follows blast radius (`plan.discovery.screenGapCap`): **low 0** / **standard 1** / **high 2**, all on `sonnet`.
+- **Model pinning.** `intent-analyzer`, `review-synthesizer`, and the gap re-dispatch reviewers are now pinned to `sonnet` in the Workflow — an un-pinned agent inherits the *session* model, so running `/review` from an opus session had been silently upgrading them to opus and blowing the budget.
+- Docs (`README.md`, `docs/ARCHITECTURE.md`, `commands/review.md`) and `config.schema.json` synced.
+
 ## v0.17.0
 
 **GitHub-exact diff boundary + `--pr` entrypoint + latency/agent-count trims.**

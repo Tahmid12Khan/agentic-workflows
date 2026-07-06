@@ -152,3 +152,96 @@ test('runVerify is on for every non-trivial tier', () => {
   const trivial = planReview({ riskPaths: [], languages: [], callsLlm: false }, {}, 'trivial');
   assert.equal(trivial.runVerify, false, 'trivial should not verify');
 });
+
+// --- lever D — fan-out trim: net-new content-gated dims deferred/capped via config.fanout ---
+
+test('lever D: off by default — trimmed is empty and every gated dim survives', () => {
+  const signals = { riskPaths: [], languages: [], perfSensitive: true, uiTouched: true };
+  const plan = planReview(signals, DEFAULT_CFG, 'standard');
+  assert.ok(plan.dimensions.includes('D9'));
+  assert.ok(plan.dimensions.includes('D17'));
+  assert.deepEqual(plan.trimmed, []);
+});
+
+test('lever D: defers D9/D17 below the floor tier (standard)', () => {
+  const signals = { riskPaths: [], languages: [], perfSensitive: true, uiTouched: true };
+  const plan = planReview(signals, { ...DEFAULT_CFG, fanout: { trim: true } }, 'standard');
+  assert.equal(plan.dimensions.includes('D9'), false);
+  assert.equal(plan.dimensions.includes('D17'), false);
+  assert.deepEqual(plan.trimmed, ['D17', 'D9']);
+});
+
+test('lever D: not deferred at or above the floor tier (high)', () => {
+  const signals = { riskPaths: [], languages: [], perfSensitive: true, uiTouched: true };
+  const plan = planReview(signals, { ...DEFAULT_CFG, fanout: { trim: true } }, 'high');
+  assert.ok(plan.dimensions.includes('D9'));
+  assert.ok(plan.dimensions.includes('D17'));
+  assert.deepEqual(plan.trimmed, []);
+});
+
+test('lever D: defers D9/D17 on low tier too', () => {
+  const signals = { riskPaths: [], languages: [], perfSensitive: true, uiTouched: true };
+  const plan = planReview(signals, { ...DEFAULT_CFG, fanout: { trim: true } }, 'low');
+  assert.equal(plan.dimensions.includes('D9'), false);
+  assert.equal(plan.dimensions.includes('D17'), false);
+  assert.deepEqual(plan.trimmed, ['D17', 'D9']);
+});
+
+test('lever D: defer_below override lowers the floor (standard is at the floor, not deferred)', () => {
+  const signals = { riskPaths: [], languages: [], perfSensitive: true, uiTouched: true };
+  const plan = planReview(signals, { ...DEFAULT_CFG, fanout: { trim: true, defer_below: 'standard' } }, 'standard');
+  assert.ok(plan.dimensions.includes('D9'));
+  assert.ok(plan.dimensions.includes('D17'));
+  assert.deepEqual(plan.trimmed, []);
+});
+
+test('lever D: defer_dims override limits deferral to just the named dims', () => {
+  const signals = { riskPaths: [], languages: [], perfSensitive: true, uiTouched: true };
+  const plan = planReview(signals, { ...DEFAULT_CFG, fanout: { trim: true, defer_dims: ['D9'] } }, 'standard');
+  assert.equal(plan.dimensions.includes('D9'), false);
+  assert.ok(plan.dimensions.includes('D17'));
+  assert.deepEqual(plan.trimmed, ['D9']);
+});
+
+test('lever D: max_added caps the gated count, dropping lowest-priority by GATED_KEEP_ORDER', () => {
+  const signals = {
+    riskPaths: ['migration'], languages: [],
+    depsChanged: true, publicContract: true, concurrencyTouched: true,
+    errorHandlingTouched: true, typesTouched: true, perfSensitive: true, uiTouched: true,
+  };
+  const plan = planReview(signals, { ...DEFAULT_CFG, fanout: { trim: true, defer_dims: [], max_added: 2 } }, 'standard');
+  // net gated = {D15,D10,D6,D7,D11,D9,D17} (D4 subtracted as base) — keep top-2 by keep_order: D6,D7
+  assert.ok(plan.dimensions.includes('D6'));
+  assert.ok(plan.dimensions.includes('D7'));
+  assert.ok(plan.dimensions.includes('D4')); // base dim, untouched by the cap
+  for (const d of ['D9', 'D10', 'D11', 'D15', 'D17']) assert.equal(plan.dimensions.includes(d), false, `${d} should be capped`);
+  assert.deepEqual(plan.trimmed, ['D10', 'D11', 'D15', 'D17', 'D9']);
+});
+
+test('lever D: a base-tier dim is never counted as gated, so it cannot be falsely trimmed', () => {
+  const signals = { riskPaths: [], languages: [], errorHandlingTouched: true }; // → D4, already in standard base
+  const plan = planReview(signals, { ...DEFAULT_CFG, fanout: { trim: true, max_added: 0, defer_dims: [] } }, 'standard');
+  assert.ok(plan.dimensions.includes('D4'));
+  assert.deepEqual(plan.trimmed, []);
+});
+
+test('lever D: keep_order override changes which gated dim survives the cap', () => {
+  const signals = { riskPaths: [], languages: [], depsChanged: true, publicContract: true }; // → D15, D10
+  const plan = planReview(signals, { ...DEFAULT_CFG, fanout: { trim: true, defer_dims: [], max_added: 1, keep_order: ['D10', 'D15'] } }, 'standard');
+  assert.ok(plan.dimensions.includes('D10'));
+  assert.equal(plan.dimensions.includes('D15'), false);
+  assert.deepEqual(plan.trimmed, ['D15']);
+});
+
+test('critical tier is never trimmed even with trim on + a low max_added', () => {
+  const signals = {
+    riskPaths: [], languages: [],
+    perfSensitive: true, uiTouched: true, concurrencyTouched: true,
+    typesTouched: true, depsChanged: true, publicContract: true,
+  };
+  const plan = planReview(signals, { ...DEFAULT_CFG, fanout: { trim: true, max_added: 1, defer_dims: [] } }, 'critical');
+  assert.deepEqual(plan.trimmed, []);
+  assert.ok(plan.dimensions.includes('D9'));
+  assert.ok(plan.dimensions.includes('D17'));
+  assert.ok(plan.dimensions.includes('D7'));
+});

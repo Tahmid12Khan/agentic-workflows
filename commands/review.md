@@ -39,7 +39,7 @@ Skip the checkout — review the **working tree in place** — when `enabled:fal
 - Routing (deterministic): `echo '<grouper-or-empty>' | node "$LIB/route.mjs" scrutiny > "$SCRATCH/scrutiny.json"` and `echo '{"mandatoryChecks":<plan.mandatoryChecks>}' | node "$LIB/route.mjs" checks > "$SCRATCH/checks.json"`.
 
 ## 4. Hand the fan-out to the Workflow
-The Workflow owns intent, dimension review (`dimensions × shards`), batched verification of the unsure findings (grouped by lens+file into ≤N opus verifier groups + 1 opus reverify guard, N per tier), resolve, and synthesize. It assembles the report **payload** but no longer renders it (the sandbox can't write files; rendering moves to step 5).
+The Workflow owns intent, dimension review (`dimensions × shards`), batched verification of the unsure findings (grouped by lens+file into ≤N sonnet-first verifier groups + 1 opus reverify guard, N per tier), resolve, and synthesize. It assembles the report **payload** but no longer renders it (the sandbox can't write files; rendering moves to step 5).
 
 **Assemble args deterministically — do not hand-build it.** Write the small `$SCRATCH/meta.json` `{ "flags": { "comment": <bool>, "gate": <bool>, "incremental": <bool>, "exhaustive": <bool>, "runTests": <bool> }, "startedAt": "<STARTED>", "prNumber": <n|null>, "checkout": <step-2 object|null> }`. `prNumber` = the `--pr <n>` value if passed (so it survives even the `--no-checkout` path), else `checkout.prNumber`, else the current-branch PR number from `gh`, else null. Then:
 

@@ -72,6 +72,8 @@ test('plan.mjs emits a JSON plan with the expected keys', () => {
   // into the plan for the sandbox to inject as the highest-priority reviewBlock.
   assert.equal(out.reviewInstructionsPath, 'REVIEW.md');
   assert.ok(out.reviewInstructions.length > 0 && out.reviewInstructions.length <= 8000);
+  // lever D (fan-out trim): plan.mjs forwards planReview's trimmed field (defaults to [] when off)
+  assert.ok(Array.isArray(out.trimmed));
 });
 
 test('verify.mjs select picks only the low-confidence finding', () => {

@@ -19,6 +19,7 @@
     "escalate_uncertain": true
   },
   "escalation": { "max_subagents_per_aspect": 3 },
+  "fanout": { "trim": true, "max_added": 3 },
   "exhaustive": { "on_critical": true },
   "large_diff": { "shard_threshold_loc": 600, "max_shards": 4 },
   "scan": { "deps": true, "tests": false, "lint": false },

@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { buildArgs, mergeEnrich } from '../lib/build-args.mjs';
@@ -25,7 +25,8 @@ test('buildArgs: emits exactly the keys review-workflow.mjs destructures', () =>
     meta: { flags: { gate: true }, startedAt: 'T', prNumber: 7, checkout: null },
   });
   assert.deepEqual(Object.keys(out).sort(),
-    ['bundle', 'checkout', 'contextPackPath', 'diffIndex', 'diffPath', 'flags', 'history', 'plan', 'prNumber', 'routing', 'shards', 'startedAt', 'testSignal'].sort());
+    ['bundle', 'checkout', 'contextPackPath', 'diffIndex', 'diffPath', 'flags', 'history', 'plan', 'prNumber', 'routing', 'shards', 'sliceIndex', 'startedAt', 'testSignal'].sort());
+  assert.deepEqual(out.sliceIndex, {});   // absent → {} so the workflow falls back to the full diff (no slicing)
   assert.deepEqual(out.shards, [{ label: 'all', files: ['a.js'] }]); // lifted from plan
   assert.deepEqual(out.routing, { scrutiny: { foo: 1 }, checks: { bar: 2 } });
   assert.equal(out.prNumber, 7);
@@ -83,6 +84,10 @@ test('CLI: assembles from --dir and merges enrich.json onto bundle', () => {
     assert.deepEqual(a.diffIndex, { 'a.js': [[1, 2]] });        // precomputed line index (@@ +1,2)
     assert.deepEqual(a.history, { 'a.js': ['fix: bug'] });  // S6.3 unwrapped from history.json
     assert.equal(a.testSignal.passed, false);              // S6.4 test-signal.json attached
+    // cost lever: a per-file diff slice is written to <dir>/slices and mapped by normalized path
+    assert.ok(a.sliceIndex['a.js'], 'a slice path is written for the changed file');
+    assert.match(a.sliceIndex['a.js'], /\/slices\/\d+\.patch$/);
+    assert.match(readFileSync(a.sliceIndex['a.js'], 'utf8'), /\+c/);   // the slice holds the file's hunks
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 

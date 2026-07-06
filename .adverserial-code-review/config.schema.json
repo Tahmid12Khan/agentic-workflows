@@ -137,6 +137,18 @@
       },
       "additionalProperties": false
     },
+    "fanout": {
+      "type": "object",
+      "description": "Lever D — fan-out trim (agent-count cost lever). OFF by default. When trim:true, the content-gated specialist reviewers (the net-new dimensions beyond the tier's base set) are deferred/capped to cut how many reviewer subagents fan out on sub-high tiers. Base-tier dimensions and always_dims are never trimmed; a dropped dimension is stated in the report's 'Did not run' section. Complements the sonnet-first verify and per-file diff slicing cost levers. The critical tier is never trimmed regardless of these settings.",
+      "properties": {
+        "trim": { "type": "boolean", "description": "Master switch. false (default) = no trimming, identical to prior behavior." },
+        "defer_dims": { "type": "array", "items": { "type": "string" }, "description": "Advisory specialist dimensions deferred to defer_below+ (default [\"D9\",\"D17\"] — perf & a11y). Their content signal on a sub-high change is usually covered by the correctness screen; they return at the floor tier and above." },
+        "defer_below": { "type": "string", "enum": ["low", "standard", "high", "critical"], "description": "Tier floor for defer_dims (default \"high\"): below this tier the deferred dimensions are dropped even if their signal fires." },
+        "max_added": { "type": "integer", "minimum": 0, "description": "Cap on the number of content-gated specialists added beyond the tier's base set (default: uncapped). When exceeded, the lowest-priority dimensions are dropped (priority: security/data > correctness > contract/deps/advisory)." },
+        "keep_order": { "type": "array", "items": { "type": "string" }, "description": "Override the drop-priority ranking for max_added (dims listed earlier are kept first)." }
+      },
+      "additionalProperties": false
+    },
     "checkout": {
       "type": "object",
       "description": "Detach HEAD onto the remote's latest pushed head for the review (restored afterwards), so the reviewers see the most recent pushed code rather than the local checkout. The reviewed diff is the GitHub-exact fork-point (three-dot) range by default. Disable to review the working tree in place.",

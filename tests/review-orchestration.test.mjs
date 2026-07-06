@@ -91,6 +91,17 @@ test('review-workflow.mjs declares a valid meta with 4 phases', () => {
   assert.match(src, /pluginAgent\('intent-analyzer'\)/, 'intent-analyzer must be dispatched');
   assert.doesNotMatch(src, /pluginAgent\('intent-harvester'\)/, 'intent-harvester dispatch must be removed (merged into intent-analyzer)');
   assert.doesNotMatch(src, /pluginAgent\('business-logic-analyzer'\)/, 'business-logic-analyzer dispatch must be removed (merged into intent-analyzer)');
+  // COST LEVER (model pins): intent, synth, and gap re-dispatch are reviewer/analysis passes, not
+  // orchestration — a Workflow agent with no model opt inherits the SESSION model, so from an opus
+  // session they silently ran on opus. Pin them to sonnet so cost is deterministic + matches frontmatter.
+  assert.match(src, /model: 'sonnet', label: 'intent'/, 'intent-analyzer must be pinned to sonnet (+ labelled)');
+  assert.match(src, /pluginAgent\('review-synthesizer'\), model: 'sonnet'/, 'review-synthesizer must be pinned to sonnet');
+  assert.match(src, /pluginAgent\(g\.dispatch\.agent\), model: 'sonnet'/, 'gap re-dispatch reviewers must be pinned to sonnet');
+  // COST LEVER (slicing): reviewers/verifiers Read per-file diff slices via diffReadFor, not the whole diff.
+  assert.match(src, /const diffReadFor = /, 'the per-file slice diff-read helper must exist');
+  assert.match(src, /diffReadFor\(a\.files\)/, 'reviewers must read the slices for their files');
+  // COST LEVER (sonnet-first verify): first-pass refuter groups run on modelFirst (sonnet), opus only for a critical group + the reverify guard.
+  assert.match(src, /const firstModel = plan\.verify\?\.modelFirst/, 'batched verify must be sonnet-first via modelFirst');
   assert.match(src, /function intentBrief\(/, 'intentBrief must be inlined (canonical: lib/review-orchestration.mjs)');
   // triage-classifier is skipped for the trivial tier only (launched in parallel with intent otherwise)
   assert.match(src, /plan\.tier === 'trivial' \? Promise\.resolve\(null\)/, 'triage-classifier must be guarded for the trivial tier');

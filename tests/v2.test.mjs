@@ -456,14 +456,23 @@ test('exhaustivePlan.doubleRun follows the exhaustive flag (S7.1)', () => {
 });
 
 // --- S6.1: high-tier completeness screen (cheap, mutually exclusive with the exhaustive critic) ---
-test('exhaustivePlan.completenessScreen: high tier only, never alongside the exhaustive critic', () => {
-  assert.equal(exhaustivePlan('high', {}).completenessScreen, true);         // high, not exhaustive → screen
+test('exhaustivePlan.completenessScreen: every workflow tier (low/standard/high), never alongside the exhaustive critic', () => {
+  assert.equal(exhaustivePlan('low', {}).completenessScreen, true);          // low → cheap x1 haiku screen
+  assert.equal(exhaustivePlan('standard', {}).completenessScreen, true);     // standard → screen (was off before)
+  assert.equal(exhaustivePlan('high', {}).completenessScreen, true);         // high → screen
   assert.equal(exhaustivePlan('high', {}).completenessCritic, false);        // the full opus critic does NOT run at high
-  assert.equal(exhaustivePlan('standard', {}).completenessScreen, false);    // below high → no screen
+  assert.equal(exhaustivePlan('trivial', {}).completenessScreen, false);     // trivial is reviewed inline → no screen
   assert.equal(exhaustivePlan('critical', {}).completenessScreen, false);    // critical runs the full critic instead
+  assert.equal(exhaustivePlan('critical', {}).completenessCritic, true);
   assert.equal(exhaustivePlan('high', {}, { flag: true }).completenessScreen, false); // --exhaustive supersedes the screen
   assert.equal(exhaustivePlan('high', {}, { flag: true }).completenessCritic, true);
-  assert.equal(exhaustivePlan('high', { completeness: { screen_on_high: false } }).completenessScreen, false); // opt-out
+  assert.equal(exhaustivePlan('standard', { completeness: { screen_on_high: false } }).completenessScreen, false); // opt-out
+});
+
+test('exhaustivePlan.screenGapCap: screen re-dispatch budget follows the tier (low 0 / standard 1 / high 2)', () => {
+  assert.equal(exhaustivePlan('low', {}).screenGapCap, 0);       // low: haiku screen only, no re-dispatch
+  assert.equal(exhaustivePlan('standard', {}).screenGapCap, 1);  // standard: ≤1 gap reviewer
+  assert.equal(exhaustivePlan('high', {}).screenGapCap, 2);      // high: ≤2 gap reviewers
 });
 
 // --- B7: per-dimension adversarial lens ---

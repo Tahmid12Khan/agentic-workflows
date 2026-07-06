@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { filterDiff, stripNoise, NOISE_RE, normPath, buildDiffIndex } from '../lib/trim-diff.mjs';
+import { filterDiff, stripNoise, NOISE_RE, normPath, buildDiffIndex, splitByFile } from '../lib/trim-diff.mjs';
 
 // A realistic 3-file unified diff: a modify, a new file, and a deletion.
 const DIFF = `diff --git a/lib/foo.mjs b/lib/foo.mjs
@@ -198,4 +198,25 @@ test('buildDiffIndex returns {} for empty / non-diff / null input (never throws)
   assert.deepEqual(buildDiffIndex(''), {});
   assert.deepEqual(buildDiffIndex('not a diff'), {});
   assert.deepEqual(buildDiffIndex(null), {});
+});
+
+test('splitByFile maps each changed file to its complete, verbatim diff section', () => {
+  const diff =
+    'diff --git a/src/foo.js b/src/foo.js\n--- a/src/foo.js\n+++ b/src/foo.js\n@@ -1 +1,2 @@\n-a\n+b\n+c\n' +
+    'diff --git a/src/bar.js b/src/bar.js\n--- a/src/bar.js\n+++ b/src/bar.js\n@@ -5 +5 @@\n-x\n+y\n';
+  const out = splitByFile(diff);
+  assert.deepEqual(Object.keys(out).sort(), ['src/bar.js', 'src/foo.js']);
+  assert.match(out['src/foo.js'], /^diff --git a\/src\/foo\.js/);
+  assert.match(out['src/foo.js'], /\+c\n/);
+  assert.doesNotMatch(out['src/foo.js'], /bar\.js/);   // one file's section never leaks another's hunks
+  // reassembling the sections reproduces the whole diff (no bytes lost)
+  assert.equal(out['src/foo.js'] + out['src/bar.js'], diff);
+});
+
+test('splitByFile: a deleted file keys on its old path; empty / non-diff / null → {} (never throws)', () => {
+  const del = 'diff --git a/gone.js b/gone.js\n--- a/gone.js\n+++ /dev/null\n@@ -1 +0,0 @@\n-x\n';
+  assert.deepEqual(Object.keys(splitByFile(del)), ['gone.js']);
+  assert.deepEqual(splitByFile(''), {});
+  assert.deepEqual(splitByFile('not a diff'), {});
+  assert.deepEqual(splitByFile(null), {});
 });

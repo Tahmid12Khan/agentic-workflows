@@ -150,6 +150,21 @@ test('with no observed counts (trivial inline path), the planned expectation is 
   assert.ok(cov.ran.some((a) => a.name === 'intent-analyzer'));
 });
 
+test('agentCoverage explains a fan-out-trimmed dimension distinctly from an untriggered one (Lever D)', () => {
+  // D9 (perf-scalability-reviewer) signalled but was dropped by fan-out trim; D3 (vuln-reviewer)
+  // was simply never triggered for this change — the two "did not run" reasons must read differently.
+  const trimmedPlan = { ...standardPlan, dimensions: standardPlan.dimensions.filter((d) => d !== 'D9'), trimmed: ['D9'] };
+  const cov = agentCoverage(trimmedPlan);
+  const perf = cov.notRun.find((a) => a.name === 'perf-scalability-reviewer');
+  assert.ok(perf, 'perf-scalability-reviewer belongs under did-not-run');
+  assert.match(perf.reason, /fan-out trim/);
+  // control: a reviewer whose dim is neither planned nor trimmed keeps the "was triggered" wording
+  const vuln = cov.notRun.find((a) => a.name === 'vuln-reviewer');
+  assert.ok(vuln, 'vuln-reviewer belongs under did-not-run');
+  assert.match(vuln.reason, /was triggered/);
+  assert.doesNotMatch(vuln.reason, /fan-out trim/);
+});
+
 test('agentCoverage flags a trivial change as inline (no subagents)', () => {
   const cov = agentCoverage({ tier: 'trivial', dimensions: ['D2', 'D13'], runVerify: false });
   assert.equal(cov.trivialInline, true);
