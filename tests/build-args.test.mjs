@@ -20,16 +20,18 @@ test('mergeEnrich: enrichment wins, base fields kept, null patch is a no-op', ()
 test('buildArgs: emits exactly the keys review-workflow.mjs destructures', () => {
   const out = buildArgs({
     plan: { tier: 'standard', shards: [{ label: 'all', files: ['a.js'] }] },
-    bundle: { summary: 's' }, diff: 'diff text',
+    bundle: { summary: 's' }, diffPath: '/scratch/diff.txt', diffIndex: { 'a.js': [[1, 3]] },
     scrutiny: { foo: 1 }, checks: { bar: 2 },
     meta: { flags: { gate: true }, startedAt: 'T', prNumber: 7, checkout: null },
   });
   assert.deepEqual(Object.keys(out).sort(),
-    ['bundle', 'checkout', 'contextPack', 'diff', 'flags', 'history', 'plan', 'prNumber', 'routing', 'shards', 'startedAt', 'testSignal'].sort());
+    ['bundle', 'checkout', 'contextPackPath', 'diffIndex', 'diffPath', 'flags', 'history', 'plan', 'prNumber', 'routing', 'shards', 'startedAt', 'testSignal'].sort());
   assert.deepEqual(out.shards, [{ label: 'all', files: ['a.js'] }]); // lifted from plan
   assert.deepEqual(out.routing, { scrutiny: { foo: 1 }, checks: { bar: 2 } });
   assert.equal(out.prNumber, 7);
-  assert.equal(out.contextPack, '');   // absent → '' so the workflow prepends nothing
+  assert.equal(out.diffPath, '/scratch/diff.txt');   // args-by-reference: path, not text
+  assert.deepEqual(out.diffIndex, { 'a.js': [[1, 3]] });
+  assert.equal(out.contextPackPath, null);   // absent → null so the workflow prepends nothing
   assert.deepEqual(out.history, {});   // S6.3 absent → {} so the workflow attaches nothing
   assert.equal(out.testSignal, null);  // S6.4 absent → null (no --run-tests)
 });
@@ -37,23 +39,24 @@ test('buildArgs: emits exactly the keys review-workflow.mjs destructures', () =>
 test('buildArgs: S6 history + testSignal are carried through when provided', () => {
   const history = { 'src/a.js': ['fix: bug'] };
   const testSignal = { ran: true, passed: false, failing: ['t1'] };
-  const out = buildArgs({ plan: {}, bundle: {}, diff: 'd', history, testSignal });
+  const out = buildArgs({ plan: {}, bundle: {}, diffPath: '/d', history, testSignal });
   assert.deepEqual(out.history, history);
   assert.deepEqual(out.testSignal, testSignal);
 });
 
 test('buildArgs: missing meta/routing degrade to safe defaults, not throws', () => {
-  const out = buildArgs({ plan: {}, bundle: {}, diff: 'd' });
+  const out = buildArgs({ plan: {}, bundle: {}, diffPath: '/d' });
   assert.deepEqual(out.shards, []);
   assert.deepEqual(out.routing, { scrutiny: null, checks: null });
   assert.deepEqual(out.flags, {});
   assert.equal(out.startedAt, null);
-  assert.equal(out.contextPack, '');
+  assert.equal(out.contextPackPath, null);
+  assert.deepEqual(out.diffIndex, {});   // absent → {} so the workflow demotes nothing (no crash)
 });
 
-test('buildArgs: a provided context pack is carried through verbatim', () => {
-  const out = buildArgs({ plan: {}, bundle: {}, diff: 'd', contextPack: 'PACK TEXT' });
-  assert.equal(out.contextPack, 'PACK TEXT');
+test('buildArgs: a provided context pack path is carried through', () => {
+  const out = buildArgs({ plan: {}, bundle: {}, diffPath: '/d', contextPackPath: '/scratch/context.txt' });
+  assert.equal(out.contextPackPath, '/scratch/context.txt');
 });
 
 test('CLI: assembles from --dir and merges enrich.json onto bundle', () => {
@@ -61,7 +64,7 @@ test('CLI: assembles from --dir and merges enrich.json onto bundle', () => {
   try {
     writeFileSync(join(dir, 'plan.json'), '{"tier":"standard","shards":[{"label":"all","files":["a.js"]}]}');
     writeFileSync(join(dir, 'bundle.json'), '{"summary":"x"}');
-    writeFileSync(join(dir, 'diff.txt'), 'diff --git a/a.js b/a.js\n');
+    writeFileSync(join(dir, 'diff.txt'), 'diff --git a/a.js b/a.js\n--- a/a.js\n+++ b/a.js\n@@ -1 +1,2 @@\n-a\n+b\n+c\n');
     writeFileSync(join(dir, 'meta.json'), '{"flags":{"gate":true},"prNumber":231}');
     writeFileSync(join(dir, 'enrich.json'), '{"pr":{"number":231},"trackerUsage":{"clickup":true}}');
     writeFileSync(join(dir, 'context.txt'), 'CONTEXT PACK: defs + callers\n');
@@ -75,20 +78,22 @@ test('CLI: assembles from --dir and merges enrich.json onto bundle', () => {
     assert.equal(a.bundle.trackerUsage.clickup, true);
     assert.equal(a.prNumber, 231);
     assert.equal(a.flags.gate, true);
-    assert.match(a.contextPack, /CONTEXT PACK/);    // context.txt attached file→file
+    assert.equal(a.diffPath, join(dir, 'diff.txt'));            // args-by-reference: absolute path, not text
+    assert.equal(a.contextPackPath, join(dir, 'context.txt'));  // context path, agents Read it
+    assert.deepEqual(a.diffIndex, { 'a.js': [[1, 2]] });        // precomputed line index (@@ +1,2)
     assert.deepEqual(a.history, { 'a.js': ['fix: bug'] });  // S6.3 unwrapped from history.json
     assert.equal(a.testSignal.passed, false);              // S6.4 test-signal.json attached
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('CLI: a missing context.txt degrades to an empty contextPack (not a failure)', () => {
+test('CLI: a missing context.txt degrades to a null contextPackPath (not a failure)', () => {
   const dir = mkdtempSync(join(tmpdir(), 'build-args-'));
   try {
     writeFileSync(join(dir, 'plan.json'), '{"tier":"standard"}');
     writeFileSync(join(dir, 'diff.txt'), 'diff --git a/a.js b/a.js\n');
     const r = spawnSync(process.execPath, [SCRIPT, '--dir', dir], { encoding: 'utf8' });
     assert.equal(r.status, 0, r.stderr);
-    assert.equal(JSON.parse(r.stdout).contextPack, '');
+    assert.equal(JSON.parse(r.stdout).contextPackPath, null);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 

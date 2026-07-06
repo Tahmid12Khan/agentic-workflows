@@ -68,6 +68,10 @@ test('plan.mjs emits a JSON plan with the expected keys', () => {
   assert.equal(out.verify.modelFirst, 'sonnet');
   assert.equal(out.verify.modelEscalate, 'opus');
   assert.deepEqual(out.verify.escalateDirectSeverity, ['critical']);
+  // review_instructions: this repo ships REVIEW.md, so the content (not just the path) is resolved
+  // into the plan for the sandbox to inject as the highest-priority reviewBlock.
+  assert.equal(out.reviewInstructionsPath, 'REVIEW.md');
+  assert.ok(out.reviewInstructions.length > 0 && out.reviewInstructions.length <= 8000);
 });
 
 test('verify.mjs select picks only the low-confidence finding', () => {

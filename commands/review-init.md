@@ -23,6 +23,7 @@ Run `node "${CLAUDE_PLUGIN_ROOT:-$HOME/.claude/adversarial-code-review}/lib/pref
     "new behavior is covered by a test"
   ],
   "project_rules": ["CLAUDE.md", "AGENTS.md"],
+  "review_instructions": "REVIEW.md",
   "intent_sources": { "pr": true, "commits": true, "pr_comments": true, "clickup": true, "jira": true },
   "trackers": {
     "clickup": { "key_pattern": "[A-Z][A-Z0-9]+-[0-9]+" },
@@ -41,6 +42,7 @@ Run `node "${CLAUDE_PLUGIN_ROOT:-$HOME/.claude/adversarial-code-review}/lib/pref
 ```
 
 - Keep only `project_rules` entries for files that exist.
+- **`project_rules` vs `review_instructions`** — two different channels. `project_rules` is a list of *paths* to general repo conventions (e.g. `CLAUDE.md`), surfaced to the reviewers as low-priority context. `review_instructions` is a single path (default `REVIEW.md`) whose **content** is injected verbatim as a **MANDATORY, highest-priority** block leading every finding-generating agent (reviewers + intent + critic) — use it for review-specific "always check X / never flag Y" guidance that must win over general conventions. Defaults to `REVIEW.md` by convention; drop the key or delete the file to disable. Content is capped at 8k.
 - The **bounded-verification** caps (`verify`, `escalation`) keep cost predictable: at most 3 looks and 3 subagents per aspect. Leave them unless the user wants tighter/looser bounds. Spend is **tier-aware**: reviewer models scale by tier (opus only on the hardest dimensions at high/critical — override with `models`), the simplification pass (D16) is **opt-in below the high tier** (add `"always_dims": ["D16"]` to run it everywhere), and the verify confidence bar can be tuned per tier with `verify.by_tier.<tier>` (defaults 80/80 on every tier — `reverify_below` is clamped up to `report_confidence` so it never opens a dead band).
 - **`exhaustive`** turns on the deeper ultrareview-parity passes (completeness critic, D3 taint verifier, and a double run of the correctness + vuln reviewers unioned by finding). They cost more tokens, so by default they run only at the `critical` tier (`on_critical: true`) or when `/review --exhaustive` is passed. Set `on_critical: false` to make them opt-in only.
 - **Trackers (on by default, via MCP — no tokens):** `intent_sources.clickup`/`jira` are enabled. Tickets referenced in the PR/commit text are pulled in as review context by the orchestrator **through the ClickUp / Atlassian MCP server** — the plugin **never stores or uses API tokens**. `trackers.<name>.key_pattern` controls how ticket keys are recognised; adjust it to match this repo's convention. If a tracker is enabled but its MCP server is not connected, `/review` asks the user to connect it and otherwise skips that tracker for the run — and the report always states whether each tracker was used. To turn one off, set its `intent_sources` flag to `false`.

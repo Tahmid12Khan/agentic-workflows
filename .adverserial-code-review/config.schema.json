@@ -13,6 +13,7 @@
     },
     "mandatory_checks": { "type": "array", "items": { "type": "string" } },
     "project_rules": { "type": "array", "items": { "type": "string" } },
+    "review_instructions": { "type": "string" },
     "always_dims": {
       "type": "array",
       "items": { "type": "string" },

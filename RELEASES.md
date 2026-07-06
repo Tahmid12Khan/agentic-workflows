@@ -3,6 +3,18 @@
 Release log for the **adversarial-code-review** plugin. Newest first. The forward-looking
 plan lives in [ROADMAP.md](ROADMAP.md). Source-of-truth version: `.claude-plugin/plugin.json`.
 
+## v0.16.0
+
+**Args-by-reference + REVIEW.md review instructions** — two independent wins to the review payload.
+
+- **Args-by-reference.** The unified diff and the shared context pack are the bulk of the Workflow payload; they are now passed as absolute **paths** (`diffPath`/`contextPackPath`), never as inlined text. Each reviewer/verifier agent `Read`s the diff file itself and focuses on its file list, so `args.json` stays a few KB and the diff never enters the main agent's context or the Workflow tool call. The one diff-derived datum the sandbox still needs — the compact off-diff line-range `diffIndex` — is precomputed once in `build-args.mjs` via `trim-diff.mjs`. Consequently `review-workflow.mjs` drops its inlined `filterDiff`/`stripNoise`/`sectionPath`/`buildDiffIndex` copies: file-list scope is now an advisory focus instruction, not a hard diff cut, so a reviewer is never starved of a needed hunk (D3/security still reasons over the whole diff for cross-file taint).
+- **REVIEW.md review instructions.** New `review_instructions` config key (defaults to `REVIEW.md` by convention). Unlike `project_rules` (paths to general repo conventions), its **content** is injected verbatim as a cache-leading MANDATORY block into every finding-generating agent (reviewers + intent-analyzer + completeness-critic), so review-specific rules outrank general conventions when they conflict. Capped at 8k so it stays a byte-identical, prompt-cacheable prefix; `''` when absent → a no-op that adds no tokens.
+- `lib/build-args.mjs`: emits `diffPath`/`contextPackPath`/`diffIndex` in place of inlined `diff`/`contextPack`.
+- `lib/plan.mjs`: resolves `reviewInstructions` (+ `reviewInstructionsPath`) from the `review_instructions` config key into the plan.
+- `lib/review-workflow.mjs`: agents Read the diff from `diffPath`; consumes precomputed `args.diffIndex`; prepends the `reviewBlock` (REVIEW.md) to reviewers/intent/critic.
+- `.adverserial-code-review/config.schema.json`: adds the `review_instructions` string key.
+- Docs (`README.md`, `docs/ARCHITECTURE.md`, `commands/review.md`) and this repo's own `REVIEW.md` + config synced.
+
 ## v0.15.0
 
 **Batched adversarial verify** — replaces the per-finding cheap→strong verifier escalation with a bounded, all-opus batched path. Selected (unsure) findings are grouped by `(verifier lens, file)` into at most `maxVerifierAgents` groups (per-tier default: 3 low / 5 standard / 8 high & critical); one opus `finding-verifier`/`taint-verifier` per group refutes every finding it holds in a single pass, so the diff is paid once per group instead of once per finding and agent count stops scaling with finding count. Every selected finding is still verified — the cap bounds agent count, never coverage. A single extra opus **reverify guard** re-checks refuted/uncertain hot findings for false negatives, so total verifier agents ≤ N+1 per run.

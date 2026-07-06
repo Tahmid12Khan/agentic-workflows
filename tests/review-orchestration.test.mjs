@@ -103,29 +103,34 @@ test('review-workflow.mjs declares a valid meta with 4 phases', () => {
   // the retired per-finding cheap→strong escalation must be gone from the workflow (superseded by batched all-opus)
   assert.doesNotMatch(src, /function verifyWithEscalation\(/, 'per-finding escalation is retired — batched verify supersedes it');
   assert.doesNotMatch(src, /function firstPassModel\(/, 'per-finding firstPassModel is retired from the workflow');
-  // S2: the shared context pack is destructured from args and prepended to every reviewer packet
-  assert.match(src, /const \{ plan, bundle, diff, contextPack,/, 'contextPack must be destructured from args');
-  assert.match(src, /const packBlock =/, 'the context pack must be turned into a prepend block');
+  // S2 (args-by-reference): the shared context pack arrives as a PATH, turned into a Read-it-first
+  // instruction prepended to every reviewer packet; the diff is likewise passed by path.
+  assert.match(src, /const \{ plan, bundle, diffPath, contextPackPath, diffIndex,/, 'diffPath/contextPackPath/diffIndex must be destructured from args');
+  assert.match(src, /const packBlock =/, 'the context pack path must be turned into a prepend block');
   assert.match(src, /\$\{packBlock\}/, 'packBlock must be prepended to the reviewer packet(s)');
-  // diff-trim (rank 1) is inlined + canonical in lib/trim-diff.mjs; D3 (security) stays on the full diff
-  assert.match(src, /function filterDiff\(/, 'filterDiff must be inlined (canonical: lib/trim-diff.mjs)');
-  assert.match(src, /diffForAspect/, 'dimension reviewers must use the shard-scoped diffForAspect');
-  assert.match(src, /a\.dim !== 'D3'/, 'D3 (security) must never get a trimmed diff');
+  // ARGS-BY-REFERENCE: the diff is NEVER inlined — agents Read it from diffPath. The old in-sandbox
+  // diff-trim helpers must be gone (their return re-inflated args past the Workflow inline limit).
+  assert.match(src, /const diffRead = `Read the diff at \$\{diffPath\}/, 'the workflow must hand agents the diff PATH to Read, not inlined text');
+  assert.doesNotMatch(src, /function filterDiff\(/, 'filterDiff must NOT be inlined — agents focus by file list, not pre-sliced diff text');
+  assert.doesNotMatch(src, /function stripNoise\(/, 'stripNoise must NOT be inlined — the intent agent is told to ignore churn while reading diffPath');
+  assert.match(src, /unsharded: \['D3'\]/, 'D3 (security) stays one aspect over all files for cross-file taint');
   // the dead pr-comment-author dispatch is gone (comments.mjs does the real posting)
   assert.doesNotMatch(src, /pluginAgent\('pr-comment-author'\)/, 'pr-comment-author dispatch must be removed');
 });
 
-test('inlined filterDiff stays in sync with the canonical lib/trim-diff.mjs', async () => {
-  const src = readFileSync(new URL('../lib/review-workflow.mjs', import.meta.url), 'utf8');
-  const { filterDiff } = await import('../lib/trim-diff.mjs');
-  const diff = `diff --git a/x.mjs b/x.mjs\n--- a/x.mjs\n+++ b/x.mjs\n@@ -1 +1 @@\n-a\n+b\ndiff --git a/y.mjs b/y.mjs\n--- a/y.mjs\n+++ b/y.mjs\n@@ -1 +1 @@\n-c\n+d\n`;
-  // canonical behavior the inlined copy must reproduce: scope to one file, fall back on miss
-  assert.match(filterDiff(diff, ['x.mjs']), /x\.mjs/);
-  assert.doesNotMatch(filterDiff(diff, ['x.mjs']), /y\.mjs/);
-  assert.equal(filterDiff(diff, ['nope.mjs']), diff);
-  // the inlined copy must define the same gate + helpers (kept in sync by hand)
-  assert.match(src, /function sectionPath\(/);
-  assert.match(src, /const normPath =/);
+test('args-by-reference: the workflow keeps the diff out of args + its own body', async () => {
+  const wf = readFileSync(new URL('../lib/review-workflow.mjs', import.meta.url), 'utf8');
+  const ba = readFileSync(new URL('../lib/build-args.mjs', import.meta.url), 'utf8');
+  // build-args emits the diff PATH + a precomputed diffIndex, never the diff text.
+  assert.match(ba, /diffPath,/, 'build-args must emit diffPath');
+  assert.match(ba, /diffIndex: buildDiffIndex\(diffText\)/, 'build-args must precompute the diffIndex from diff.txt');
+  assert.doesNotMatch(ba, /\bdiff,\n/, 'build-args must not carry the diff TEXT in args');
+  // the sandbox consumes the passed diffIndex for off-diff demotion (it can no longer build one).
+  assert.match(wf, /partitionByScope\(synth\.findings \?\? \[\], diffIndex/, 'the workflow must demote using the passed-in diffIndex');
+  assert.doesNotMatch(wf, /function buildDiffIndex\(/, 'buildDiffIndex must live in build-args (via trim-diff), not the sandbox');
+  // normPath is still needed inline (inDiffScope keys on it); sectionPath went with filterDiff.
+  assert.match(wf, /const normPath =/);
+  assert.doesNotMatch(wf, /function sectionPath\(/, 'sectionPath left with filterDiff — nothing in the sandbox parses diff text now');
 });
 
 // --- intent brief (S3: merged intent-analyzer) ---
@@ -361,5 +366,5 @@ test('inlined S6 helpers stay in sync with lib/review-orchestration.mjs', () => 
   assert.match(src, /plan\.discovery\?\.completenessScreen/, 'the screen must gate on completenessScreen');
   assert.match(src, /label: 'completeness-screen'/, 'the screen dispatch must be labelled');
   assert.match(src, /reviewerAddendum\(a\.agent, \{ history, testSignal \}\)/, 'reviewers must get the S6 addendum');
-  assert.match(src, /const \{ plan, bundle, diff, contextPack, history, testSignal,/, 'history + testSignal must be destructured from args');
+  assert.match(src, /const \{ plan, bundle, diffPath, contextPackPath, diffIndex, history, testSignal,/, 'history + testSignal must be destructured from args');
 });
