@@ -3,6 +3,20 @@
 Release log for the **adversarial-code-review** plugin. Newest first. The forward-looking
 plan lives in [ROADMAP.md](ROADMAP.md). Source-of-truth version: `.claude-plugin/plugin.json`.
 
+## v0.17.0
+
+**GitHub-exact diff boundary + `--pr` entrypoint + latency/agent-count trims.**
+
+- **Fork-point (three-dot) diff.** The reviewed range is now `merge-base(base,head)..head` by default — byte- and sha-identical to a PR's GitHub Files-changed tab, even when the base branch has advanced past the fork point (a two-dot range previously dragged in base's newer commits as phantom deletions). `checkout.mjs` gains a `forkpoint` subcommand (no fetch, no HEAD move) for the `--no-checkout` path, and `mergeBaseArgs`. Config: `checkout.fork_point` (default `true`; `false` reverts to two-dot).
+- **`--pr <n>` entrypoint.** `/review --pr <n>` resolves the PR's base/head via `gh pr view` and runs the full checkout+review — the pr-review-loop / CI can pass just a PR number and repo cwd.
+- **`--max-tier <t>`.** Caps the auto-computed tier only (never raises, ignored when `--tier` is set) — lets a batch caller bound spend without pinning every review to one depth. `--tier` is now explicitly authoritative: it can no longer be raised by `risk_map` nor capped by `--max-tier`.
+- **New raw-diff capture step.** `lib/capture-diff.mjs` replaces the runbook's inline `git diff > diff.txt`, so the orchestrating model can no longer "helpfully" reformat the capture and silently break `buildDiffIndex`/`context-pack.mjs` (which key on raw `diff --git`/`@@` markers).
+- **Aspects group by agent, not dimension.** `expandAspects` now folds dimensions sharing a reviewer agent (`correctness-reviewer` → D1/D2/D12, `data-store-reviewer` → D6/D8) into one pass per shard instead of re-running the same agent once per dimension — fewer agent calls, same coverage.
+- **Parallel Intent phase.** `triage-classifier` and `intent-analyzer` don't depend on each other, so they now launch together and are awaited with `Promise.all` instead of sequentially — roughly halves Intent-phase wall-clock.
+- **`--incremental-from <sha>`** lets a caller (the pr-review-loop) name the previously-reviewed head directly, for reviews running in a throwaway worktree with no local `last-review.json`.
+- Out-of-scope findings in the report now show their actual verify status (`verified ×N` / `trusted`) instead of a blanket "(unverified)" label — they go through the same verification pass as in-diff findings.
+- Docs (`README.md`, `docs/ARCHITECTURE.md`, `commands/review.md`) synced.
+
 ## v0.16.0
 
 **Args-by-reference + REVIEW.md review instructions** — two independent wins to the review payload.

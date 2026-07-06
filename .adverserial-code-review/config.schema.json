@@ -139,10 +139,11 @@
     },
     "checkout": {
       "type": "object",
-      "description": "Detach HEAD onto the remote's latest pushed head for the review (restored afterwards), so the reviewers see the most recent pushed code rather than the local checkout. Disable to review the working tree in place.",
+      "description": "Detach HEAD onto the remote's latest pushed head for the review (restored afterwards), so the reviewers see the most recent pushed code rather than the local checkout. The reviewed diff is the GitHub-exact fork-point (three-dot) range by default. Disable to review the working tree in place.",
       "properties": {
         "enabled": { "type": "boolean" },
-        "remote": { "type": "string" }
+        "remote": { "type": "string" },
+        "fork_point": { "type": "boolean", "description": "Review the GitHub-exact three-dot range merge-base(base,head)..head (default true). Set false to review the two-dot base..head instead (includes base's newer commits when the branch is behind)." }
       },
       "additionalProperties": false
     },

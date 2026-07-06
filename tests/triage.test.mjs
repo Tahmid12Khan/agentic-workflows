@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import { computeSignals } from '../lib/signals.mjs';
-import { planReview, pickModels } from '../lib/triage.mjs';
+import { planReview, pickModels, capTier } from '../lib/triage.mjs';
 
 const dir = new URL('../fixtures/cases/', import.meta.url);
 const cases = readdirSync(dir).map(f => JSON.parse(readFileSync(new URL(f, dir))));
@@ -111,6 +111,37 @@ test('risk_map config can force a tier floor', () => {
   const cfg = { ...DEFAULT_CFG, risk_map: { critical: ['src/profile/**'] } };
   const plan = planReview(computeSignals(f), cfg);
   assert.equal(plan.tier, 'critical');
+});
+
+test('an explicit --tier is authoritative: risk_map cannot raise it', () => {
+  // Same files that risk_map would escalate to critical on the AUTO path...
+  const f = cases.find(c => c.name === 'normal feature');
+  const cfg = { ...DEFAULT_CFG, risk_map: { critical: ['src/profile/**'] } };
+  assert.equal(planReview(computeSignals(f), cfg).tier, 'critical');       // auto: risk_map escalates
+  // ...but when the user pins --tier standard, it STAYS standard (no silent escalation).
+  const pinned = planReview(computeSignals(f), cfg, 'standard');
+  assert.equal(pinned.tier, 'standard');
+});
+
+test('--max-tier clamps ONLY the auto-computed tier, never the explicit --tier', () => {
+  const f = cases.find(c => c.name === 'normal feature');
+  const cfg = { ...DEFAULT_CFG, risk_map: { critical: ['src/profile/**'] } };
+  // auto path escalates to critical, then --max-tier=standard clamps it back down
+  const capped = planReview(computeSignals(f), cfg, undefined, 'standard');
+  assert.equal(capped.tier, 'standard');
+  // a below-ceiling auto tier passes through untouched (no raise)
+  const lower = planReview(computeSignals(f), DEFAULT_CFG, undefined, 'high');
+  assert.equal(lower.tier, 'standard');
+  // explicit --tier is authoritative and IGNORES the cap (pinned high survives a standard ceiling)
+  const pinned = planReview(computeSignals(f), cfg, 'high', 'standard');
+  assert.equal(pinned.tier, 'high');
+});
+
+test('capTier only lowers: an unknown/absent ceiling is a no-op, never raises', () => {
+  assert.equal(capTier('critical', 'standard'), 'standard'); // clamp down
+  assert.equal(capTier('low', 'high'), 'low');               // below ceiling → unchanged
+  assert.equal(capTier('standard', undefined), 'standard');  // no ceiling → unchanged
+  assert.equal(capTier('standard', 'bogus'), 'standard');    // unknown ceiling → unchanged
 });
 
 test('runVerify is on for every non-trivial tier', () => {

@@ -74,10 +74,12 @@ everything from the interactive `/plugin` menu):
 
 | Flag | Effect |
 |------|--------|
-| `--base <ref>` | Compare against `<ref>` instead of the auto-detected merge-base. |
+| `--pr <n>` | Review PR `#n` directly — resolves its base/head with `gh pr view`, then fetches, detaches onto the head, and reviews the GitHub-exact fork-point range. Pass only this + the repo cwd; the plugin owns the rest (needs `gh`). |
+| `--base <ref>` | Compare against `<ref>` instead of the auto-detected base. The reviewed range is always the fork point `merge-base(<ref>,head)..head` (GitHub three-dot) unless `checkout.fork_point:false`. |
 | `--gate` | Exit non-zero on a `BLOCK` verdict (git hooks / CI). |
 | `--comment` | Post confidence ≥ 80 findings as inline PR comments — a one-click GitHub `suggestion` block when a reviewer gave an exact fix, else a one-line fix description (needs `gh`). |
-| `--tier <t>` | Force a tier (`trivial`…`critical`). |
+| `--tier <t>` | Pin the tier (`trivial`…`critical`) **authoritatively** — `risk_map` cannot raise it and `--max-tier` cannot cap it. |
+| `--max-tier <t>` | Ceiling on the **auto** tier only: the computed tier is clamped down to `<t>` (never raised, and ignored when `--tier` is set). For budget-capped batch callers. |
 | `--dimensions D2,D3` | Restrict to specific dimensions. |
 | `--incremental` | Narrow the review to only the commits added since the last review (`prevHead..head`) — but **only on a fast-forward**; a rebase/force-push (or missing state) falls open to the full `base..head`, so rewritten commits are never silently skipped. Off by default. |
 | `--full` | Force a complete `base..head` review (opt out of `--incremental`). |

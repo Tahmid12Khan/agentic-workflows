@@ -2,13 +2,26 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { expandAspects, findingKey, newCaps, canSpawn, recordSpawn, buildReportPayload, pluginAgent, PLUGIN_NS, inDiffScope, partitionByScope, intentBrief, screenPacket, selectGaps, CONSEQUENCE_DIRECTIVE, historyBlock, testSignalBlock, reviewerAddendum, DOUBLE_RUN_AGENTS, isDoubleRunAgent, dedupeFindings } from '../lib/review-orchestration.mjs';
 
-test('expandAspects = dimensions × shards', () => {
+test('expandAspects = agents × shards, dims carried as a list', () => {
   const aspects = expandAspects(
     { D2: 'correctness-reviewer', D3: 'vuln-reviewer' },
     [{ label: 'A', files: ['a.ts'] }, { label: 'B', files: ['b.ts'] }],
   );
   assert.equal(aspects.length, 4);
-  assert.deepEqual(aspects[0], { dim: 'D2', agent: 'correctness-reviewer', shardId: 'A', files: ['a.ts'] });
+  assert.deepEqual(aspects[0], { dims: ['D2'], agent: 'correctness-reviewer', shardId: 'A', files: ['a.ts'] });
+});
+
+test('expandAspects folds dims sharing an agent into ONE aspect (no duplicate agent per dim)', () => {
+  // D1/D2/D12 all map to correctness-reviewer — the old per-dim expansion spawned it 3× over the
+  // same files; now it is a single aspect carrying all three dims.
+  const aspects = expandAspects(
+    { D1: 'correctness-reviewer', D2: 'correctness-reviewer', D12: 'correctness-reviewer', D5: 'test-adequacy-reviewer' },
+    [{ label: 'all', files: ['a.ts'] }],
+  );
+  assert.equal(aspects.length, 2);
+  const corr = aspects.find((a) => a.agent === 'correctness-reviewer');
+  assert.deepEqual(corr.dims, ['D1', 'D2', 'D12']);
+  assert.deepEqual(aspects.find((a) => a.agent === 'test-adequacy-reviewer').dims, ['D5']);
 });
 
 test('expandAspects collapses unsharded dims to one all-files aspect', () => {
@@ -16,10 +29,10 @@ test('expandAspects collapses unsharded dims to one all-files aspect', () => {
   const aspects = expandAspects({ D2: 'correctness-reviewer', D3: 'vuln-reviewer' }, shards, { unsharded: ['D3'] });
   // D2 stays sharded (×2); D3 collapses to a single aspect over the union of all files
   assert.equal(aspects.length, 3);
-  const d3 = aspects.filter((a) => a.dim === 'D3');
+  const d3 = aspects.filter((a) => a.dims.includes('D3'));
   assert.equal(d3.length, 1);
-  assert.deepEqual(d3[0], { dim: 'D3', agent: 'vuln-reviewer', shardId: 'all', files: ['a.ts', 'b.ts'] });
-  assert.equal(aspects.filter((a) => a.dim === 'D2').length, 2);
+  assert.deepEqual(d3[0], { dims: ['D3'], agent: 'vuln-reviewer', shardId: 'all', files: ['a.ts', 'b.ts'] });
+  assert.equal(aspects.filter((a) => a.dims.includes('D2')).length, 2);
 });
 
 test('findingKey is line-sensitive and title-normalized', () => {
@@ -79,8 +92,8 @@ test('review-workflow.mjs declares a valid meta with 4 phases', () => {
   assert.doesNotMatch(src, /pluginAgent\('intent-harvester'\)/, 'intent-harvester dispatch must be removed (merged into intent-analyzer)');
   assert.doesNotMatch(src, /pluginAgent\('business-logic-analyzer'\)/, 'business-logic-analyzer dispatch must be removed (merged into intent-analyzer)');
   assert.match(src, /function intentBrief\(/, 'intentBrief must be inlined (canonical: lib/review-orchestration.mjs)');
-  // triage-classifier is skipped for the trivial tier only (rank 5)
-  assert.match(src, /plan\.tier !== 'trivial'/, 'triage-classifier must be guarded for the trivial tier');
+  // triage-classifier is skipped for the trivial tier only (launched in parallel with intent otherwise)
+  assert.match(src, /plan\.tier === 'trivial' \? Promise\.resolve\(null\)/, 'triage-classifier must be guarded for the trivial tier');
   // completeness-critic gates on the exhaustive discovery flag
   assert.match(src, /plan\.discovery\?\.completenessCritic/);
   // resolve is inlined (pure), not dispatched as a general-purpose executor agent

@@ -1,6 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { fetchArgs, checkoutDetachArgs, restoreArgs, rangeFor, commitsBehindArgs, parseCommits, commitInfoArgs, parseCommitInfo, commitSide } from '../lib/checkout.mjs';
+import { fetchArgs, checkoutDetachArgs, restoreArgs, rangeFor, mergeBaseArgs, commitsBehindArgs, parseCommits, commitInfoArgs, parseCommitInfo, commitSide } from '../lib/checkout.mjs';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+const CHECKOUT = new URL('../lib/checkout.mjs', import.meta.url).pathname;
 
 test('fetchArgs fetches base+head from the remote, no tags', () => {
   assert.deepEqual(fetchArgs('origin', 'main', 'feature'), ['fetch', '--no-tags', 'origin', 'main', 'feature']);
@@ -19,6 +25,39 @@ test('restoreArgs checks the original ref back out (branch name or sha)', () => 
 
 test('rangeFor builds base..head against the resolved refs', () => {
   assert.equal(rangeFor('origin/main', 'origin/feature'), 'origin/main..origin/feature');
+});
+
+test('mergeBaseArgs asks git for the fork point of base+head (three-dot base)', () => {
+  assert.deepEqual(mergeBaseArgs('origin/main', 'origin/feature'), ['merge-base', 'origin/main', 'origin/feature']);
+});
+
+// The whole point of the fork-point base: when base advances past the fork, forkpoint returns the
+// SHARED ancestor (GitHub three-dot), NOT the base tip — so the review never sees base's new commits.
+test('forkpoint returns the merge-base sha even when base moved ahead of the fork', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'acr-fp-'));
+  const git = (...a) => execFileSync('git', a, { cwd: dir, stdio: ['pipe', 'pipe', 'pipe'] }).toString().trim();
+  git('init', '-q', '-b', 'main');
+  git('config', 'user.email', 't@t'); git('config', 'user.name', 't');
+  writeFileSync(join(dir, 'a.txt'), '1\n'); git('add', '.'); git('commit', '-qm', 'base0');
+  const forkSha = git('rev-parse', 'HEAD');
+  // feature branches off the fork
+  git('checkout', '-q', '-b', 'feature');
+  writeFileSync(join(dir, 'b.txt'), 'x\n'); git('add', '.'); git('commit', '-qm', 'feat1');
+  // base advances AFTER the fork
+  git('checkout', '-q', 'main');
+  writeFileSync(join(dir, 'a.txt'), '2\n'); git('add', '.'); git('commit', '-qm', 'base1');
+  git('checkout', '-q', 'feature');
+
+  const r = spawnSync(process.execPath, [CHECKOUT, 'forkpoint', '--base', 'main', '--head', 'HEAD'], { cwd: dir, encoding: 'utf8' });
+  assert.equal(r.status, 0);
+  const out = JSON.parse(r.stdout);
+  assert.equal(out.baseSha, forkSha); // the fork point, NOT main's advanced tip
+});
+
+test('forkpoint exits 2 without --base', () => {
+  const r = spawnSync(process.execPath, [CHECKOUT, 'forkpoint'], { encoding: 'utf8' });
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /base/i);
 });
 
 test('commitsBehindArgs lists commits in base but not in head (head..base)', () => {
