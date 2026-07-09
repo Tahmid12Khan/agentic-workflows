@@ -3,6 +3,12 @@
 Release log for the **adversarial-code-review** plugin. Newest first. The forward-looking
 plan lives in [ROADMAP.md](ROADMAP.md). Source-of-truth version: `.claude-plugin/plugin.json`.
 
+## v0.19.0
+
+**Security fix: close an RCE path in the opt-in test-execution signal.**
+
+- **Untrusted-config guard for `--run-tests`.** `lib/test-signal.mjs` gains an optional `--diff <path>` flag: before executing `tests.command`, it now checks whether the reviewed range itself modifies `.adversarial-code-review/config.json` (or the legacy `.adverserial-code-review/config.json` spelling) and, if so, skips execution instead of running it. Previously an untrusted PR could edit `tests.command` and have it shell-executed via `--run-tests` — arbitrary command execution on the operator's machine. New pure `diffModifiesConfig`; without `--diff`, behavior is unchanged. Tests in `tests/test-signal.test.mjs` cover both the current and legacy config-path spellings and prove the command truly doesn't run (sentinel-file side effect), not just that the JSON envelope says so.
+
 ## v0.18.0
 
 **Three cost levers — sonnet-first verify + per-file diff slices + optional fan-out trim — and a completeness screen on every tier.**
