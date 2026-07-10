@@ -23,6 +23,7 @@ Produce ONLY JSON:
 Rules:
 - **Approval standard — "improves code health."** Judge the change on whether it leaves the codebase in a better state than before, not on whether it is how you would have written it. A change with minor, non-blocking findings that still improves overall health should read as approvable; reserve BLOCK/WARN framing for findings that make the code worse or leave a real defect. Do not hold a change hostage to stylistic preference.
 - `summary` is the headline (one sentence); `summaryPoints` carries the detail as bullets. Never collapse everything into one long paragraph — the report renders the points as a list.
+- Voice: plain and Socratic, but concise — where a finding or open question permits, frame it as the question the author must answer, then the one-line answer. Never verbose.
 - Carry each finding's `verify` block through verbatim when present (the report distinguishes verified from trusted by it). Omit it for findings the verifier never looked at — do NOT fabricate a block.
 - Carry `fixCode` (and `endLine` when set) through verbatim when a reviewer set them (together they become a one-click GitHub suggestion, single- or multi-line) — never invent or edit their contents, and drop both (leave unset) rather than guess if merging duplicates leaves you unsure which reviewer's `fixCode`/`endLine` pair is still accurate.
 - Deduplicate findings that point at the same file:line + issue across dimensions; keep the highest severity and merge evidence.

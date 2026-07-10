@@ -3,6 +3,13 @@
 Release log for the **adversarial-code-review** plugin. Newest first. The forward-looking
 plan lives in [ROADMAP.md](ROADMAP.md). Source-of-truth version: `.claude-plugin/plugin.json`.
 
+## v0.21.0
+
+**Review-output voice + line-range locations.**
+
+- **Socratic-concise voice rule** in all 14 dimension reviewers + `review-synthesizer`: open the `title`/`fix` with the question the code should have answered ("What happens when X is null?"), then answer it in one short sentence — no filler, no lecture.
+- **`file:line-endLine` ranges** in the report: new `loc()` helper in `lib/render.mjs` folds a finding's optional `endLine` into every markdown and HTML location (findings, still-open, skipped, out-of-diff, open-question cards). Line-less findings still render file-only.
+
 ## v0.20.0
 
 **The full ACR improvement plan (WS1–WS9)** — review doctrine + a change-size advisory (WS1); a pre-existing-bug class + machine-readable gate output (WS6); a PR-reaction feedback loop (WS2); re-review convergence + thread auto-resolution (WS3); user-intent effort levels (WS4); the author-side `/review-respond` loop + opt-in `--fix` (WS5); a symbol-graph context-pack v2 (WS7); a review-quality eval harness (WS8); and hygiene/polish (WS9).
