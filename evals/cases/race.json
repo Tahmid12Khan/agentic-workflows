@@ -1,0 +1,13 @@
+{
+  "name": "race",
+  "dir": "fixtures/race",
+  "seeded": [
+    {
+      "file": "config-cache.mjs",
+      "line": 6,
+      "class": "race",
+      "description": "Check-then-act on the module-level cache with no lock/in-flight guard — concurrent callers both see cache===null and both call fetchConfig()."
+    }
+  ],
+  "cleanFiles": ["logger.mjs"]
+}

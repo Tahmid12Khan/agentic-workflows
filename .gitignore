@@ -5,11 +5,21 @@ node_modules/
 # config.schema.json) stays tracked; everything below is produced at run time.
 # Patterns are scoped to the dir so they do NOT case-insensitively swallow
 # commands/review.md on macOS/Windows.
+.adversarial-code-review/review-*/
+.adversarial-code-review/worktrees/
+.adversarial-code-review/cache/
+.adversarial-code-review/learnings.json
+.adversarial-code-review/last-review.json
+.adversarial-code-review/posted-comments.json
+
+# WS9 migration: the plugin dir was named `.adverserial-code-review` (typo) before this release;
+# ignore its state the same way in case it's still around unmigrated.
 .adverserial-code-review/review-*/
 .adverserial-code-review/worktrees/
 .adverserial-code-review/cache/
 .adverserial-code-review/learnings.json
 .adverserial-code-review/last-review.json
+.adverserial-code-review/posted-comments.json
 
 # subagent-driven-development scratch (briefs, reports, ledger)
 .superpowers/

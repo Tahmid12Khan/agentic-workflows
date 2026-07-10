@@ -1,0 +1,6 @@
+{
+  "name": "clean-validation",
+  "dir": "fixtures/clean-validation",
+  "seeded": [],
+  "cleanFiles": ["signup.mjs"]
+}

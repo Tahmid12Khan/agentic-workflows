@@ -1,5 +1,5 @@
 ---
-description: Set up code review in this project — checks your environment and scaffolds .adverserial-code-review/config.json.
+description: Set up code review in this project — checks your environment and scaffolds .adversarial-code-review/config.json.
 ---
 
 Initialize the adversarial-code-review plugin for the current repository.
@@ -8,8 +8,8 @@ Initialize the adversarial-code-review plugin for the current repository.
 Run `node "${CLAUDE_PLUGIN_ROOT:-$HOME/.claude/adversarial-code-review}/lib/preflight.mjs"` and show the report. If a required item is missing (✗), tell the user how to fix it before continuing.
 
 ## 2. Scaffold the config
-- If `.adverserial-code-review/config.json` already exists, print it and ask whether to overwrite. Do nothing else unless they confirm.
-- Otherwise, detect the repo's main languages/areas (glob the tree: `*.java`, `*.ts`, `*.py`, `*.sql`, migrations, an `auth/`, `payment/`, or `api/` dir, a `package.json`/`pom.xml`/`requirements.txt`). Write a tailored `.adverserial-code-review/config.json`. Start from this template and adjust `risk_map` to the paths that actually exist:
+- If `.adversarial-code-review/config.json` already exists, print it and ask whether to overwrite. Do nothing else unless they confirm.
+- Otherwise, detect the repo's main languages/areas (glob the tree: `*.java`, `*.ts`, `*.py`, `*.sql`, migrations, an `auth/`, `payment/`, or `api/` dir, a `package.json`/`pom.xml`/`requirements.txt`). Write a tailored `.adversarial-code-review/config.json`. Start from this template and adjust `risk_map` to the paths that actually exist:
 
 ```json
 {
@@ -36,7 +36,7 @@ Run `node "${CLAUDE_PLUGIN_ROOT:-$HOME/.claude/adversarial-code-review}/lib/pref
   "large_diff": { "shard_threshold_loc": 600, "max_shards": 4 },
   "scan": { "deps": true, "tests": false, "lint": false },
   "checkout": { "enabled": true, "remote": "origin" },
-  "learning": { "enabled": true, "store": ".adverserial-code-review/learnings.json" },
+  "learning": { "enabled": true, "store": ".adversarial-code-review/learnings.json" },
   "notify": { "ask_on_unresolved": true }
 }
 ```
@@ -48,7 +48,7 @@ Run `node "${CLAUDE_PLUGIN_ROOT:-$HOME/.claude/adversarial-code-review}/lib/pref
 - **Trackers (on by default, via MCP — no tokens):** `intent_sources.clickup`/`jira` are enabled. Tickets referenced in the PR/commit text are pulled in as review context by the orchestrator **through the ClickUp / Atlassian MCP server** — the plugin **never stores or uses API tokens**. `trackers.<name>.key_pattern` controls how ticket keys are recognised; adjust it to match this repo's convention. If a tracker is enabled but its MCP server is not connected, `/review` asks the user to connect it and otherwise skips that tracker for the run — and the report always states whether each tracker was used. To turn one off, set its `intent_sources` flag to `false`.
 - **`checkout` (on by default):** before reviewing, the plugin fetches the PR's base + head from `remote` (default `origin`) and **detaches HEAD onto the latest pushed head**, then restores your original branch when done — so both the diff and the reviewers' own `Read`/`Grep` see the most recent pushed code, not a stale local checkout. The head/base it reviewed is recorded in the report. If your working tree is dirty and git would overwrite it, the run stops and asks you to `git stash`/`git commit` yourself and re-run (it never stashes for you). Set `enabled: false` (or pass `--no-checkout`) to review the working tree **in place** — required when reviewing **uncommitted** local changes.
 
-Validate the result against `${CLAUDE_PLUGIN_ROOT:-$HOME/.claude/adversarial-code-review}/.adverserial-code-review/config.schema.json`.
+Validate the result against `${CLAUDE_PLUGIN_ROOT:-$HOME/.claude/adversarial-code-review}/.adversarial-code-review/config.schema.json`.
 
 ## 3. Confirm
-Print the path written and tell the user they can now run `/review` (and `/review --gate` in hooks/CI, `/review --comment` to post inline PR comments). Each review is written to its own folder `.adverserial-code-review/review-<date>/review-<n>[-pr-<num>]/` (`review.md` + `review.html`); add `.adverserial-code-review/review-*/`, `.adverserial-code-review/learnings.json`, and `.adverserial-code-review/last-review.json` to `.gitignore` if they prefer those uncommitted. NEVER edit anything except `.adverserial-code-review/config.json` (and `.gitignore` if asked).
+Print the path written and tell the user they can now run `/review` (and `/review --gate` in hooks/CI, `/review --comment` to post inline PR comments). Each review is written to its own folder `.adversarial-code-review/review-<date>/review-<n>[-pr-<num>]/` (`review.md` + `review.html`); add `.adversarial-code-review/review-*/`, `.adversarial-code-review/learnings.json`, and `.adversarial-code-review/last-review.json` to `.gitignore` if they prefer those uncommitted. NEVER edit anything except `.adversarial-code-review/config.json` (and `.gitignore` if asked).

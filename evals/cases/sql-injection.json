@@ -1,0 +1,13 @@
+{
+  "name": "sql-injection",
+  "dir": "fixtures/sql-injection",
+  "seeded": [
+    {
+      "file": "query.mjs",
+      "line": 3,
+      "class": "sql-injection",
+      "description": "findUserByName splices the untrusted name argument directly into a SQL string instead of using a parameterized query."
+    }
+  ],
+  "cleanFiles": ["schema.mjs"]
+}

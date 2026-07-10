@@ -1,0 +1,13 @@
+{
+  "name": "missing-authz",
+  "dir": "fixtures/missing-authz",
+  "seeded": [
+    {
+      "file": "handler.mjs",
+      "line": 4,
+      "class": "missing-authz",
+      "description": "deleteAccount deletes the account for req.params.id with no check that the caller owns that account or is an admin — any authenticated user can delete any account."
+    }
+  ],
+  "cleanFiles": ["routes.mjs"]
+}

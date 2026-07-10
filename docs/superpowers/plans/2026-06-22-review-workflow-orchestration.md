@@ -11,7 +11,7 @@
 ## Global Constraints
 
 - **Zero runtime dependencies** — `node:` builtins only. `package.json` has no `dependencies`. (verbatim: golden rule #2)
-- **Advisory, never edits source** — only review artifacts under `.adverserial-code-review/` and detached worktrees may be written. (golden rule #1)
+- **Advisory, never edits source** — only review artifacts under `.adversarial-code-review/` and detached worktrees may be written. (golden rule #1)
 - **Degrade to a note, never crash mid-run** — probe optional tools up front; on missing/failed optional tool, push a human-readable string to a notes collection and continue. Hard exit reserved for git. (golden rule #3)
 - **Determinism** — no `Date`/random in identity-generating code; stable sorts use an explicit tie-break. Workflow scripts cannot call `Date.now()`/`Math.random()`/`new Date()` — pass timestamps via `args`. (golden rule #4)
 - **Severity vocabulary is fixed**: `critical | important | minor | suggestion` (lowercase). Never `high`/`med`/`low`/`info`.
@@ -163,7 +163,7 @@ wrap them before checking so real syntax errors are still caught."
 
 **Interfaces:**
 - Consumes: nothing new.
-- Produces: `report.mjs` now (a) always writes to `.adverserial-code-review/review-{date}/review-{counter}[-pr-{n}]/review.{md,html}`, (b) exits `2` with a clear message when `data.plan` or `data.agentRuns` is absent, (c) no longer recognizes `--out`/`--html`. `--base-dir` and `--gate` are retained.
+- Produces: `report.mjs` now (a) always writes to `.adversarial-code-review/review-{date}/review-{counter}[-pr-{n}]/review.{md,html}`, (b) exits `2` with a clear message when `data.plan` or `data.agentRuns` is absent, (c) no longer recognizes `--out`/`--html`. `--base-dir` and `--gate` are retained.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -214,7 +214,7 @@ test('report.mjs ignores --out/--html and writes the per-run folder', () => {
   const r = runReport(validPayload(), { cwd, args: ['--out', 'REVIEW.md', '--html', 'REVIEW.html'] });
   assert.equal(r.status, 0);
   assert.ok(!existsSync(join(cwd, 'REVIEW.md')), 'must NOT write REVIEW.md');
-  const dateDirs = readdirSync(join(cwd, '.adverserial-code-review')).filter((d) => d.startsWith('review-'));
+  const dateDirs = readdirSync(join(cwd, '.adversarial-code-review')).filter((d) => d.startsWith('review-'));
   assert.ok(dateDirs.length === 1, 'must create the per-run date folder');
 });
 ```
@@ -237,7 +237,7 @@ Edit `lib/report.mjs`:
 
 (b) Args — replace lines 20-21 (delete `explicitOut`/`explicitHtml`), keep `baseDir`:
 ```javascript
-const baseDir = arg('--base-dir', '.adverserial-code-review');
+const baseDir = arg('--base-dir', '.adversarial-code-review');
 ```
 
 (c) After the `data` parse block (after current line 37), add the guards:
@@ -767,7 +767,7 @@ Capture the start time: `STARTED=$(date -u +%Y-%m-%dT%H:%M:%SZ)`.
 Run `node "$LIB/preflight.mjs"`. If it exits non-zero, show the report and STOP.
 
 ## 2. Worktree (review the latest pushed code)
-Resolve base/head and create a throwaway worktree exactly as `worktree.mjs` supports: read the `worktree` config block (defaults `enabled:true`, `remote:"origin"`, `base_dir:".adverserial-code-review/worktrees"`, `keep:false`). `--base <ref>` wins; else the PR's base/head (`gh pr view --json number,baseRefName,headRefName`); else default branch vs current branch. Skip the worktree (set `WT` empty, `worktrees=[]`) when `enabled:false`, `--no-worktree`, or reviewing uncommitted local changes. Otherwise `node "$LIB/worktree.mjs" setup …` → set `WT=<path>`, record `worktrees`. Run steps 3 with `WT` as cwd.
+Resolve base/head and create a throwaway worktree exactly as `worktree.mjs` supports: read the `worktree` config block (defaults `enabled:true`, `remote:"origin"`, `base_dir:".adversarial-code-review/worktrees"`, `keep:false`). `--base <ref>` wins; else the PR's base/head (`gh pr view --json number,baseRefName,headRefName`); else default branch vs current branch. Skip the worktree (set `WT` empty, `worktrees=[]`) when `enabled:false`, `--no-worktree`, or reviewing uncommitted local changes. Otherwise `node "$LIB/worktree.mjs" setup …` → set `WT=<path>`, record `worktrees`. Run steps 3 with `WT` as cwd.
 
 ## 3. Deterministic inputs (run from `WT` when present)
 - `node "$LIB/plan.mjs" --base <baseRef>` (pass through `--tier`/`--dimensions`/`--exhaustive`) → the **plan** JSON. If `plan.tier == "trivial"`: do one quick inline correctness/comment pass, build a minimal payload (still including `plan` + `agentRuns:{}`) and skip to step 5.
@@ -795,8 +795,8 @@ Workflow({
 - Relay `folderPath` + verdict + any `notes` to the user.
 - `--comment`: `echo '{"findings":[enriched],"head":"<head>","prNumber":<n>,"existingComments":[...]}' | node "$LIB/comments.mjs"` to post inline PR comments (requires `gh`).
 - Worktree teardown: if step 2 created one and `worktree.keep` is not `true`, `node "$LIB/worktree.mjs" remove --path "$WT"`.
-- Incremental state: write `.adverserial-code-review/last-review.json` with this run's finding keys + range.
-- Notify: if `needsHuman` is non-empty and `notify.ask_on_unresolved`, present those questions as a short numbered list; their answers are saved to `.adverserial-code-review/learnings.json`.
+- Incremental state: write `.adversarial-code-review/last-review.json` with this run's finding keys + range.
+- Notify: if `needsHuman` is non-empty and `notify.ask_on_unresolved`, present those questions as a short numbered list; their answers are saved to `.adversarial-code-review/learnings.json`.
 
 ## Output discipline
 Strengths-first, cite `file:line`, advisory only — never edit source.

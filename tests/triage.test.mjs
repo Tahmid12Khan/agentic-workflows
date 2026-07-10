@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import { computeSignals } from '../lib/signals.mjs';
-import { planReview, pickModels, capTier } from '../lib/triage.mjs';
+import { planReview, pickModels, capTier, applyEffort, EFFORT_LEVELS } from '../lib/triage.mjs';
 
 const dir = new URL('../fixtures/cases/', import.meta.url);
 const cases = readdirSync(dir).map(f => JSON.parse(readFileSync(new URL(f, dir))));
@@ -38,6 +38,18 @@ test('payment change → critical tier, security+concurrency mandatory, verify o
   assert.ok(plan.dimensions.includes('D7'));
   assert.equal(plan.runVerify, true);
   assert.equal(plan.models.D3, 'opus');
+});
+
+test('baseTier auto-classifies "low" only when fileCount<=3, netLoc<=40, and tests are present', () => {
+  const boundary = { riskPaths: [], languages: [], publicContract: false, concurrencyTouched: false, fileCount: 3, netLoc: 40, testsPresent: true };
+  assert.equal(planReview(boundary, DEFAULT_CFG).tier, 'low');
+
+  // just over either boundary falls back to standard
+  assert.equal(planReview({ ...boundary, fileCount: 4 }, DEFAULT_CFG).tier, 'standard');
+  assert.equal(planReview({ ...boundary, netLoc: 41 }, DEFAULT_CFG).tier, 'standard');
+
+  // tests absent → never auto-classified low, even with tiny fileCount/netLoc
+  assert.equal(planReview({ ...boundary, testsPresent: false }, DEFAULT_CFG).tier, 'standard');
 });
 
 test('normal feature → standard tier, D16 opt-in below high, verify on', () => {
@@ -231,6 +243,59 @@ test('lever D: keep_order override changes which gated dim survives the cap', ()
   assert.ok(plan.dimensions.includes('D10'));
   assert.equal(plan.dimensions.includes('D15'), false);
   assert.deepEqual(plan.trimmed, ['D15']);
+});
+
+// --- WS4: applyEffort — report/verify thresholds+caps only, never tier/gate ---
+
+const EFFORT_PLAN = { tier: 'standard', gate: { block_on: ['critical'], warn_on: ['high'] }, verify: { reportConfidence: 80, maxVerifierAgents: 5 } };
+
+test('applyEffort: medium is an identity pass-through (today\'s behavior, byte for byte)', () => {
+  const out = applyEffort(EFFORT_PLAN, 'medium');
+  assert.equal(out.effort, 'medium');
+  assert.deepEqual(out.verify, EFFORT_PLAN.verify);
+  assert.deepEqual(out.gate, EFFORT_PLAN.gate);
+  assert.equal(out.tier, EFFORT_PLAN.tier);
+});
+
+test('applyEffort: an unknown or absent effort falls back to medium', () => {
+  assert.equal(applyEffort(EFFORT_PLAN, undefined).effort, 'medium');
+  assert.equal(applyEffort(EFFORT_PLAN, 'bogus').effort, 'medium');
+});
+
+test('applyEffort: low raises the report bar to 90 and trims one verifier seat (floor 1)', () => {
+  const out = applyEffort(EFFORT_PLAN, 'low');
+  assert.equal(out.verify.reportConfidence, 90);
+  assert.equal(out.verify.maxVerifierAgents, 4); // 5 - 1
+  const starved = applyEffort({ ...EFFORT_PLAN, verify: { reportConfidence: 80, maxVerifierAgents: 1 } }, 'low');
+  assert.equal(starved.verify.maxVerifierAgents, 1); // floor, never 0
+});
+
+test('applyEffort: high lowers the report bar to 60 and guarantees high-tier verifier thoroughness (>=8)', () => {
+  const out = applyEffort(EFFORT_PLAN, 'high'); // standard tier's cap (5) is below the high-tier floor
+  assert.equal(out.verify.reportConfidence, 60);
+  assert.equal(out.verify.maxVerifierAgents, 8);
+  // never LOWERS an already-bigger cap
+  const already = applyEffort({ ...EFFORT_PLAN, verify: { reportConfidence: 80, maxVerifierAgents: 10 } }, 'high');
+  assert.equal(already.verify.maxVerifierAgents, 10);
+});
+
+test('applyEffort: max matches high\'s report/verify thresholds (exhaustive + no-fan-out-trim are plan.mjs concerns)', () => {
+  const out = applyEffort(EFFORT_PLAN, 'max');
+  assert.equal(out.verify.reportConfidence, 60);
+  assert.equal(out.verify.maxVerifierAgents, 8);
+});
+
+test('applyEffort NEVER changes plan.tier, at any effort level', () => {
+  for (const level of EFFORT_LEVELS) {
+    assert.equal(applyEffort(EFFORT_PLAN, level).tier, EFFORT_PLAN.tier, `${level} must not touch tier`);
+  }
+});
+
+test('gate invariance: the gate block_on/warn_on is untouched across every effort level', () => {
+  for (const level of EFFORT_LEVELS) {
+    const out = applyEffort(EFFORT_PLAN, level);
+    assert.deepEqual(out.gate, EFFORT_PLAN.gate, `${level} must not loosen or touch the gate`);
+  }
 });
 
 test('critical tier is never trimmed even with trim on + a low max_added', () => {

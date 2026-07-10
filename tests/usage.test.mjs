@@ -1,6 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { DEFAULT_PRICES, resolvePrices, priceFor, costOf, tallyLines, tallyByFamily, familyOf, cacheHitPct, encodeProjectDir } from '../lib/usage.mjs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { DEFAULT_PRICES, resolvePrices, priceFor, costOf, tallyLines, tallyByFamily, familyOf, cacheHitPct, encodeProjectDir, transcriptFiles, computeReviewUsage } from '../lib/usage.mjs';
 
 test('priceFor matches model families by substring; unknown falls back to opus', () => {
   assert.equal(priceFor('claude-opus-4-8'), DEFAULT_PRICES.opus);
@@ -96,4 +99,112 @@ test('tallyByFamily splits usage per model family, honoring the window', () => {
 test('encodeProjectDir mirrors Claude Code project-dir encoding', () => {
   assert.equal(encodeProjectDir('/Users/x/IdeaProjects/agentic-workflows'), '-Users-x-IdeaProjects-agentic-workflows');
   assert.equal(encodeProjectDir('/a/b.c/d'), '-a-b-c-d'); // dots also become dashes
+});
+
+// --- transcriptFiles: recursive jsonl walk ---
+
+test('transcriptFiles: main transcript is "orchestrator", direct + nested subagent transcripts are "subagents"', () => {
+  const home = mkdtempSync(join(tmpdir(), 'acr-tf-'));
+  try {
+    const projDir = join(home, '.claude', 'projects', '-proj');
+    const wfDir = join(projDir, 'sess1', 'subagents', 'workflows', 'wf_x');
+    mkdirSync(wfDir, { recursive: true });
+    writeFileSync(join(projDir, 'sess1.jsonl'), '');
+    writeFileSync(join(projDir, 'sess1', 'subagents', 'agent-a.jsonl'), '');
+    writeFileSync(join(wfDir, 'agent-b.jsonl'), '');
+
+    const files = transcriptFiles({ home, cwd: '/proj', sessionId: 'sess1' });
+    const byScope = files.reduce((m, f) => ((m[f.scope] = (m[f.scope] || 0) + 1), m), {});
+    assert.equal(byScope.orchestrator, 1);
+    assert.equal(byScope.subagents, 2, 'both the direct and the doubly-nested workflow transcript must be found');
+  } finally { rmSync(home, { recursive: true, force: true }); }
+});
+
+test('transcriptFiles: no sessionId falls back to scanning the whole project dir', () => {
+  const home = mkdtempSync(join(tmpdir(), 'acr-tf-fallback-'));
+  try {
+    const projDir = join(home, '.claude', 'projects', '-proj');
+    mkdirSync(join(projDir, 'other-session', 'subagents'), { recursive: true });
+    writeFileSync(join(projDir, 'other-session.jsonl'), '');
+    writeFileSync(join(projDir, 'other-session', 'subagents', 'agent-c.jsonl'), '');
+
+    const files = transcriptFiles({ home, cwd: '/proj', sessionId: null });
+    assert.equal(files.length, 2);
+    assert.ok(files.some((f) => f.scope === 'orchestrator'));
+    assert.ok(files.some((f) => f.scope === 'subagents'));
+  } finally { rmSync(home, { recursive: true, force: true }); }
+});
+
+test('transcriptFiles: no project dir at all → empty list, never throws', () => {
+  const home = mkdtempSync(join(tmpdir(), 'acr-tf-empty-'));
+  try {
+    assert.deepEqual(transcriptFiles({ home, cwd: '/never-reviewed', sessionId: 'x' }), []);
+  } finally { rmSync(home, { recursive: true, force: true }); }
+});
+
+// --- computeReviewUsage: malformed lines, the since-window, deterministic breakdown sort ---
+
+test('computeReviewUsage: a malformed jsonl line is skipped, not fatal to the rest of the run', () => {
+  const home = mkdtempSync(join(tmpdir(), 'acr-cru-malformed-'));
+  try {
+    const projDir = join(home, '.claude', 'projects', '-proj');
+    mkdirSync(projDir, { recursive: true });
+    const line = (o) => JSON.stringify(o) + '\n';
+    writeFileSync(join(projDir, 'sess1.jsonl'),
+      line({ timestamp: '2026-06-30T10:00:00Z', message: { model: 'claude-sonnet-4-6', usage: { input_tokens: 100, output_tokens: 10 } } }) +
+      '{not valid json\n' +
+      line({ timestamp: '2026-06-30T10:01:00Z', message: { model: 'claude-sonnet-4-6', usage: { input_tokens: 50, output_tokens: 5 } } }));
+
+    const usage = computeReviewUsage({ home, cwd: '/proj', sessionId: 'sess1', since: '2026-06-30T09:00:00Z' });
+    assert.equal(usage.inputTokens, 150);   // both valid lines counted, the malformed one skipped
+    assert.equal(usage.messages, 2);
+  } finally { rmSync(home, { recursive: true, force: true }); }
+});
+
+test('computeReviewUsage: the since-window excludes entries timestamped before it', () => {
+  const home = mkdtempSync(join(tmpdir(), 'acr-cru-window-'));
+  try {
+    const projDir = join(home, '.claude', 'projects', '-proj');
+    mkdirSync(projDir, { recursive: true });
+    const line = (o) => JSON.stringify(o) + '\n';
+    writeFileSync(join(projDir, 'sess1.jsonl'),
+      line({ timestamp: '2026-06-30T08:00:00Z', message: { model: 'claude-sonnet-4-6', usage: { input_tokens: 9999 } } }) +
+      line({ timestamp: '2026-06-30T10:00:00Z', message: { model: 'claude-sonnet-4-6', usage: { input_tokens: 100 } } }));
+
+    const usage = computeReviewUsage({ home, cwd: '/proj', sessionId: 'sess1', since: '2026-06-30T09:00:00Z' });
+    assert.equal(usage.inputTokens, 100, 'the pre-window entry must be excluded');
+    assert.equal(usage.messages, 1);
+  } finally { rmSync(home, { recursive: true, force: true }); }
+});
+
+test('computeReviewUsage: breakdown is sorted by cost desc, deterministically (stable across repeat calls)', () => {
+  const home = mkdtempSync(join(tmpdir(), 'acr-cru-sort-'));
+  try {
+    const projDir = join(home, '.claude', 'projects', '-proj');
+    const subDir = join(projDir, 'sess1', 'subagents');
+    mkdirSync(subDir, { recursive: true });
+    const line = (o) => JSON.stringify(o) + '\n';
+    writeFileSync(join(projDir, 'sess1.jsonl'),
+      line({ timestamp: '2026-06-30T10:00:00Z', message: { model: 'claude-opus-4-8', usage: { input_tokens: 1000, output_tokens: 100 } } }));
+    writeFileSync(join(subDir, 'agent-a.jsonl'),
+      line({ timestamp: '2026-06-30T10:01:00Z', message: { model: 'claude-sonnet-4-6', usage: { input_tokens: 200, output_tokens: 20 } } }));
+
+    const since = '2026-06-30T09:00:00Z';
+    const a = computeReviewUsage({ home, cwd: '/proj', sessionId: 'sess1', since });
+    const b = computeReviewUsage({ home, cwd: '/proj', sessionId: 'sess1', since });
+    assert.deepEqual(a.breakdown.map((r) => `${r.scope}/${r.model}`), b.breakdown.map((r) => `${r.scope}/${r.model}`));
+    assert.equal(a.breakdown[0].scope, 'orchestrator'); // opus/orchestrator costs more — sorted first
+    assert.ok(a.breakdown[0].costUsd >= a.breakdown[1].costUsd);
+  } finally { rmSync(home, { recursive: true, force: true }); }
+});
+
+test('computeReviewUsage: returns null when config disables usage tracking', () => {
+  const home = mkdtempSync(join(tmpdir(), 'acr-cru-disabled-'));
+  try {
+    const projDir = join(home, '.claude', 'projects', '-proj');
+    mkdirSync(projDir, { recursive: true });
+    writeFileSync(join(projDir, 'sess1.jsonl'), JSON.stringify({ timestamp: '2026-06-30T10:00:00Z', message: { model: 'claude-sonnet-4-6', usage: { input_tokens: 100 } } }) + '\n');
+    const usage = computeReviewUsage({ home, cwd: '/proj', sessionId: 'sess1', since: '2026-06-30T09:00:00Z', config: { usage: { enabled: false } } });
+    assert.equal(usage, null);
+  } finally { rmSync(home, { recursive: true, force: true }); }
 });

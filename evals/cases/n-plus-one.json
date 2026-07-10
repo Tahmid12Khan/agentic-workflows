@@ -1,0 +1,13 @@
+{
+  "name": "n-plus-one",
+  "dir": "fixtures/n-plus-one",
+  "seeded": [
+    {
+      "file": "orders.mjs",
+      "line": 5,
+      "class": "n-plus-one",
+      "description": "listOrdersWithItems issues one orderItems query per order inside the loop instead of a single batched query — N+1 queries for N orders."
+    }
+  ],
+  "cleanFiles": ["serializers.mjs"]
+}

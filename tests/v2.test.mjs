@@ -167,6 +167,16 @@ test('resolveVerification respects the 3-look cap (ignores extra verdicts)', () 
   assert.equal(r.verify.passes, 3); // 1 review + only 2 verifiers counted
   assert.equal(r.verify.capped, true);
 });
+test('partition: exact MIN_CONFIDENCE boundary — 80 ships to report, 79 falls to needs-human', () => {
+  const resolved = [
+    { title: 'at80', decision: 'keep', confidence: 80 },
+    { title: 'at79', decision: 'keep', confidence: 79 },
+  ];
+  const { report, needsHuman } = partition(resolved, verifyPolicy({}));
+  assert.deepEqual(report.map(f => f.title), ['at80']);
+  assert.deepEqual(needsHuman.map(f => f.title), ['at79']);
+});
+
 test('partition routes survivors, drops, and unresolved correctly', () => {
   const resolved = [
     { title: 'keep', decision: 'keep', confidence: 90 },
@@ -211,11 +221,12 @@ test('resolveIncrementalRange narrows on a fast-forward, fails open otherwise (S
   assert.equal(resolveIncrementalRange({ base: 'B', head: 'H', prevHead: 'H', isAncestor: ff }).incremental, false);
   assert.equal(resolveIncrementalRange({ base: 'B', head: 'H', prevHead: 'P', isAncestor: boom }).incremental, false);
 });
-test('buildLastReview keeps the sha keys + a minimal finding projection', () => {
-  const state = buildLastReview({ base: 'B', head: 'H', range: 'B..H', findings: [{ file: 'a.ts', line: 5, title: 'x', dimension: 'D2', evidence: 'dropped', fix: 'dropped' }] });
-  assert.equal(state.version, 1);
+test('buildLastReview keeps the sha keys + a minimal finding projection (WS3: + severity/line/key/commentId, + round)', () => {
+  const state = buildLastReview({ base: 'B', head: 'H', range: 'B..H', findings: [{ file: 'a.ts', line: 5, title: 'x', dimension: 'D2', severity: 'minor', evidence: 'dropped', fix: 'dropped' }] });
+  assert.equal(state.version, 2);
   assert.equal(state.head, 'H');
-  assert.deepEqual(state.findings, [{ file: 'a.ts', title: 'x', dimension: 'D2' }]);  // only findingKey fields survive
+  assert.equal(state.round, 1);
+  assert.deepEqual(state.findings, [{ file: 'a.ts', title: 'x', dimension: 'D2', severity: 'minor', line: 5, key: findingKey({ file: 'a.ts', title: 'x' }), commentId: null }]);
 });
 test('recordRun accumulates recurring counts and open questions', () => {
   const after = recordRun(EMPTY, { reported: [{ file: 'a.ts', title: 'x' }], needsHuman: [{ title: 'unsure?', file: 'b.ts' }], range: 'r' });

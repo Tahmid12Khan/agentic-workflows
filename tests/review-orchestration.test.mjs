@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { expandAspects, findingKey, newCaps, canSpawn, recordSpawn, buildReportPayload, pluginAgent, PLUGIN_NS, inDiffScope, partitionByScope, intentBrief, screenPacket, selectGaps, CONSEQUENCE_DIRECTIVE, historyBlock, testSignalBlock, reviewerAddendum, DOUBLE_RUN_AGENTS, isDoubleRunAgent, dedupeFindings } from '../lib/review-orchestration.mjs';
+import { expandAspects, findingKey, newCaps, canSpawn, recordSpawn, buildReportPayload, pluginAgent, PLUGIN_NS, inDiffScope, partitionByScope, intentBrief, intentContext, screenPacket, selectGaps, CONSEQUENCE_DIRECTIVE, historyBlock, testSignalBlock, reviewerAddendum, DOUBLE_RUN_AGENTS, isDoubleRunAgent, dedupeFindings } from '../lib/review-orchestration.mjs';
 
 test('expandAspects = agents × shards, dims carried as a list', () => {
   const aspects = expandAspects(
@@ -152,8 +152,10 @@ test('args-by-reference: the workflow keeps the diff out of args + its own body'
   // the sandbox consumes the passed diffIndex for off-diff demotion (it can no longer build one).
   assert.match(wf, /partitionByScope\(synth\.findings \?\? \[\], diffIndex/, 'the workflow must demote using the passed-in diffIndex');
   assert.doesNotMatch(wf, /function buildDiffIndex\(/, 'buildDiffIndex must live in build-args (via trim-diff), not the sandbox');
-  // normPath is still needed inline (inDiffScope keys on it); sectionPath went with filterDiff.
-  assert.match(wf, /const normPath =/);
+  // normPath is still needed inline (inDiffScope keys on it) — now a function declaration mirroring
+  // trim-diff.mjs's unquote-then-strip-prefix form, not the old bare arrow; sectionPath went with filterDiff.
+  assert.match(wf, /function normPath\(p\)/);
+  assert.match(wf, /function unquoteGitPath\(s\)/, 'unquoteGitPath must be inlined alongside normPath');
   assert.doesNotMatch(wf, /function sectionPath\(/, 'sectionPath left with filterDiff — nothing in the sandbox parses diff text now');
 });
 
@@ -197,6 +199,47 @@ test('inlined intentBrief stays in sync with the canonical lib/review-orchestrat
   assert.match(src, /function intentBrief\(intent\)/);
   assert.match(src, /\(intent\.groups \?\? \[\]\)\.filter\(\(g\) => g\?\.scrutinize\)/);
   assert.match(src, /typeof intent !== 'object'/);
+});
+
+// --- intentContext: the intent-analyzer's REAL PR/comment/commit/ticket digest ---
+test('intentContext renders PR + comments + commits + tickets, each capped', () => {
+  const bundle = {
+    pr: { title: 'Add auth', body: 'Implements OAuth per RFC-123' },
+    existingComments: [{ author: 'alice', body: 'looks risky' }, { author: 'bob', body: 'lgtm' }],
+    commits: [{ subject: 'wip' }, { subject: 'fix: token refresh' }],
+    tickets: [{ tracker: 'jira', key: 'AB-1', title: 'OAuth support', description: 'Users need SSO' }],
+  };
+  const ctx = intentContext(bundle);
+  assert.match(ctx, /PR: Add auth/);
+  assert.match(ctx, /Implements OAuth per RFC-123/);
+  assert.match(ctx, /alice: looks risky/);
+  assert.match(ctx, /bob: lgtm/);
+  assert.match(ctx, /fix: token refresh/);
+  assert.match(ctx, /jira AB-1: OAuth support — Users need SSO/);
+});
+
+test('intentContext caps each section (comments ≤10, commits ≤20) and long text', () => {
+  const manyComments = Array.from({ length: 15 }, (_, i) => ({ author: `u${i}`, body: `c${i}` }));
+  const manyCommits = Array.from({ length: 30 }, (_, i) => ({ subject: `s${i}` }));
+  const ctx = intentContext({ existingComments: manyComments, commits: manyCommits });
+  assert.equal((ctx.match(/^- u\d+:/gm) ?? []).length, 10);
+  assert.equal((ctx.match(/^- s\d+$/gm) ?? []).length, 20);
+  const longBody = 'x'.repeat(5000);
+  const capped = intentContext({ pr: { title: 't', body: longBody } });
+  assert.ok(capped.length < longBody.length, 'PR body must be capped, not passed through whole');
+});
+
+test('intentContext degrades to an empty string on an empty/absent bundle, never throws', () => {
+  assert.equal(intentContext(), '');
+  assert.equal(intentContext({}), '');
+  assert.equal(intentContext(null), '');
+});
+
+test('inlined intentContext stays in sync with the canonical lib/review-orchestration.mjs', () => {
+  const src = readFileSync(new URL('../lib/review-workflow.mjs', import.meta.url), 'utf8');
+  assert.match(src, /function intentContext\(bundle = \{\}, \{ maxTotal = 12000 \} = \{\}\)/);
+  assert.match(src, /function truncate\(s, n\)/);
+  assert.match(src, /intentContext: intentContext\(bundle\)/, 'the intent packet must carry the real digest, not just bundle.summary');
 });
 
 test('buildReportPayload assembles all fields', () => {
@@ -391,4 +434,76 @@ test('inlined S6 helpers stay in sync with lib/review-orchestration.mjs', () => 
   assert.match(src, /label: 'completeness-screen'/, 'the screen dispatch must be labelled');
   assert.match(src, /reviewerAddendum\(a\.agent, \{ history, testSignal \}\)/, 'reviewers must get the S6 addendum');
   assert.match(src, /const \{ plan, bundle, diffPath, contextPackPath, diffIndex, history, testSignal,/, 'history + testSignal must be destructured from args');
+});
+
+// --- comprehensive textual sync guard ---
+// The regex-based checks above only confirm a signature or a substring is PRESENT — they are blind
+// to a private helper drifting internally (e.g. isOnRiskPath's null-guard/toLowerCase placement used
+// to differ from lib/verify.mjs with no test catching it). This extracts each inlined function's FULL
+// body from both the canonical source and review-workflow.mjs (by counting braces from the matching
+// parameter-list close to the end of the function, so a destructured default like
+// `{ a = {} } = {}` in the parameter list doesn't get mistaken for the body's closing brace) and
+// asserts normalized-whitespace textual equality. Canonical wins on any drift.
+function extractFunctionBody(src, name) {
+  const sig = new RegExp(`function\\s+${name}\\s*\\(`).exec(src);
+  if (!sig) return null;
+  const start = sig.index;
+  // walk the parameter list to its matching ')' first, so a destructured-default brace inside the
+  // parameter list is never mistaken for the function body's opening '{'.
+  let i = src.indexOf('(', start);
+  let pdepth = 0;
+  for (; i < src.length; i++) {
+    if (src[i] === '(') pdepth++;
+    else if (src[i] === ')') { pdepth--; if (pdepth === 0) { i++; break; } }
+  }
+  const braceStart = src.indexOf('{', i);
+  if (braceStart === -1) return null;
+  let bdepth = 0, j = braceStart;
+  for (; j < src.length; j++) {
+    if (src[j] === '{') bdepth++;
+    else if (src[j] === '}') { bdepth--; if (bdepth === 0) { j++; break; } }
+  }
+  return src.slice(start, j);
+}
+const normWs = (s) => s.replace(/\s+/g, ' ').trim();
+
+// name -> the file that owns the CANONICAL, tested copy (review-workflow.mjs inlines all of these
+// because the Workflow sandbox has no module/filesystem access — see CLAUDE.md's Workflow-DSL
+// exception). firstPassModel/shouldEscalate are DELIBERATELY not inlined (the workflow uses the
+// simpler group-level severity check instead — see the batched-verify comment in verify.mjs and the
+// `doesNotMatch(/function firstPassModel\(/)` guard in the meta test above), so they are not in this
+// list: there is no inlined copy to sync against.
+const SYNCED_FUNCTIONS = [
+  ['normPath', '../lib/trim-diff.mjs'],
+  ['unquoteGitPath', '../lib/trim-diff.mjs'],
+  ['isOnRiskPath', '../lib/verify.mjs'],
+  ['distributeSeats', '../lib/verify.mjs'],
+  ['binByFile', '../lib/verify.mjs'],
+  ['groupForVerification', '../lib/verify.mjs'],
+  ['selectForVerification', '../lib/verify.mjs'],
+  ['resolveVerification', '../lib/verify.mjs'],
+  ['partition', '../lib/verify.mjs'],
+  ['expandAspects', '../lib/review-orchestration.mjs'],
+  ['intentBrief', '../lib/review-orchestration.mjs'],
+  ['screenPacket', '../lib/review-orchestration.mjs'],
+  ['selectGaps', '../lib/review-orchestration.mjs'],
+  ['historyBlock', '../lib/review-orchestration.mjs'],
+  ['testSignalBlock', '../lib/review-orchestration.mjs'],
+  ['reviewerAddendum', '../lib/review-orchestration.mjs'],
+  ['dedupeFindings', '../lib/review-orchestration.mjs'],
+  ['intentContext', '../lib/review-orchestration.mjs'],
+  ['truncate', '../lib/review-orchestration.mjs'],
+];
+
+test('every inlined function body stays byte-for-byte (whitespace-normalized) in sync with its canonical source', () => {
+  const wf = readFileSync(new URL('../lib/review-workflow.mjs', import.meta.url), 'utf8');
+  for (const [name, canonicalPath] of SYNCED_FUNCTIONS) {
+    const canonSrc = readFileSync(new URL(canonicalPath, import.meta.url), 'utf8');
+    const canonBody = extractFunctionBody(canonSrc, name);
+    const inlinedBody = extractFunctionBody(wf, name);
+    assert.ok(canonBody, `${name}: not found in canonical ${canonicalPath}`);
+    assert.ok(inlinedBody, `${name}: not found inlined in review-workflow.mjs`);
+    assert.equal(normWs(inlinedBody), normWs(canonBody),
+      `${name}: inlined copy in review-workflow.mjs has drifted from the canonical ${canonicalPath} (canonical wins — align the inlined copy)`);
+  }
 });

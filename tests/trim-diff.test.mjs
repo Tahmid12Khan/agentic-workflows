@@ -168,6 +168,79 @@ test('normPath strips a/ b/ prefix and trailing tab metadata', () => {
   assert.equal(normPath(undefined), '');
 });
 
+// git's core.quotepath (default true) wraps a header path containing non-ASCII bytes in double
+// quotes with C-style + octal escapes: `"b/caf\303\251.js"` (the `\303\251` here is the LITERAL
+// 10-character escape sequence git prints, not the raw UTF-8 bytes — hence the doubled backslash
+// in the JS source below, needed since ES modules run in strict mode and reject a real octal
+// escape literal).
+test('normPath decodes a git-quoted non-ASCII path (core.quotepath=true form)', () => {
+  assert.equal(normPath('"b/caf\\303\\251.js"'), 'café.js');
+  assert.equal(normPath('"a/caf\\303\\251.js"'), 'café.js');
+  assert.equal(normPath('"b/caf\\303\\251.js"\t2026-01-01'), 'café.js');
+});
+
+test('normPath leaves an unquoted path untouched (no false-positive unquoting)', () => {
+  assert.equal(normPath('b/café.js'), 'café.js');
+  assert.equal(normPath('"already/plain.js'), '"already/plain.js'); // not both-ends-quoted → unchanged
+});
+
+const QUOTED_DIFF = [
+  'diff --git "a/caf\\303\\251.js" "b/caf\\303\\251.js"',
+  'index 1111111..2222222 100644',
+  '--- "a/caf\\303\\251.js"',
+  '+++ "b/caf\\303\\251.js"',
+  '@@ -1 +1,2 @@',
+  '-old',
+  '+new',
+  '+added',
+  '',
+].join('\n');
+
+test('buildDiffIndex keys a quoted non-ASCII path on its clean, decoded path', () => {
+  const idx = buildDiffIndex(QUOTED_DIFF);
+  assert.deepEqual(Object.keys(idx), ['café.js']);
+  assert.deepEqual(idx['café.js'], [[1, 2]]);
+});
+
+test('inDiffScope-relevant: filterDiff/splitByFile also resolve the quoted section by its clean path', () => {
+  assert.deepEqual(Object.keys(splitByFile(QUOTED_DIFF)), ['café.js']);
+  assert.match(filterDiff(QUOTED_DIFF, ['café.js']), /\+added/);
+});
+
+test('sectionPath resolves a pure rename section with no +++/--- hunks (diff --git fallback)', () => {
+  const diff = [
+    'diff --git a/old-name.js b/new-name.js',
+    'similarity index 100%',
+    'rename from old-name.js',
+    'rename to new-name.js',
+    '',
+  ].join('\n');
+  const idx = buildDiffIndex(diff);
+  assert.deepEqual(idx['new-name.js'], []);   // no hunks, but path stays in the changed set
+  assert.deepEqual(Object.keys(splitByFile(diff)), ['new-name.js']);
+});
+
+test('sectionPath resolves a quoted diff --git header (rename into a non-ASCII name)', () => {
+  const diff = [
+    'diff --git "a/old.js" "b/caf\\303\\251.js"',
+    'similarity index 100%',
+    'rename from old.js',
+    'rename to café.js',
+    '',
+  ].join('\n');
+  assert.deepEqual(Object.keys(splitByFile(diff)), ['café.js']);
+});
+
+test('sectionPath resolves a binary-file section with no +++/--- lines (diff --git fallback)', () => {
+  const diff = [
+    'diff --git a/img/x.png b/img/y.png',
+    'index 1111111..2222222 100644',
+    'Binary files a/img/x.png and b/img/y.png differ',
+    '',
+  ].join('\n');
+  assert.deepEqual(Object.keys(splitByFile(diff)), ['img/y.png']);
+});
+
 test('buildDiffIndex maps files to their new-side changed line ranges (multi-hunk)', () => {
   const diff = [
     'diff --git a/src/foo.js b/src/foo.js',

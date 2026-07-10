@@ -1,0 +1,13 @@
+{
+  "name": "off-by-one",
+  "dir": "fixtures/off-by-one",
+  "seeded": [
+    {
+      "file": "paginate.mjs",
+      "line": 5,
+      "class": "off-by-one",
+      "description": "pageSlice passes end + 1 to Array.slice, returning one extra item that belongs to the next page."
+    }
+  ],
+  "cleanFiles": ["format.mjs"]
+}

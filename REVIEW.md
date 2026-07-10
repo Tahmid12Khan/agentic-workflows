@@ -4,7 +4,7 @@ Highest-priority, review-specific rules. These outrank general conventions. Flag
 
 ## Always flag
 
-- **Source edits.** No `lib/` module may author or persist a change to a reviewed file. Only writes allowed: artifacts under `.adverserial-code-review/`. A finding's `fix` is text, never applied.
+- **Source edits.** No `lib/` module may author or persist a change to a reviewed file. Only writes allowed: artifacts under `.adversarial-code-review/`. A finding's `fix` is text, never applied.
 - **New runtime deps.** Imports must be `node:` builtins only. Any npm import or a new `dependencies` entry in `package.json` is a violation.
 - **Crash-on-missing-tool.** Optional tools must degrade to a `notes`/`skipped`/`warn` string, not throw. `process.exit(1)` only for genuinely required tools (git) via `preflight.mjs`.
 - **Non-determinism in identity.** No `Date`/random in any function that builds an identity (e.g. `findingKey`). Stable sorts need an explicit tie-break key.

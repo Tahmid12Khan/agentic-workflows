@@ -1,6 +1,6 @@
 {
   "risk_map": {
-    "critical": ["lib/**", ".adverserial-code-review/**", "commands/**"],
+    "critical": ["lib/**", ".adversarial-code-review/**", "commands/**"],
     "high": ["agents/**"]
   },
   "mandatory_checks": [
@@ -10,7 +10,7 @@
   "project_rules": ["CLAUDE.md"],
   "review_instructions": "REVIEW.md",
   "intent_sources": { "pr": true, "commits": true, "pr_comments": true, "clickup": true, "jira": true },
-  "gate": { "block_on": ["critical"], "warn_on": ["high"] },
+  "gate": { "block_on": ["critical"], "warn_on": ["important"] },
   "verify": {
     "max_passes_per_aspect": 3,
     "max_subagents_per_aspect": 3,
@@ -24,7 +24,7 @@
   "large_diff": { "shard_threshold_loc": 600, "max_shards": 4 },
   "scan": { "deps": true, "tests": false, "lint": false },
   "checkout": { "enabled": true, "remote": "origin" },
-  "learning": { "enabled": true, "store": ".adverserial-code-review/learnings.json" },
+  "learning": { "enabled": true, "store": ".adversarial-code-review/learnings.json" },
   "notify": { "ask_on_unresolved": true },
   "trackers": {
     "clickup": { "key_pattern": "[A-Z][A-Z0-9]+-[0-9]+" },

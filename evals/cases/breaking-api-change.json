@@ -1,0 +1,13 @@
+{
+  "name": "breaking-api-change",
+  "dir": "fixtures/breaking-api-change",
+  "seeded": [
+    {
+      "file": "price.mjs",
+      "line": 6,
+      "class": "breaking-api-change",
+      "description": "formatPrice, a published cross-service export, changed its return type from a formatted currency string to a raw number — a backwards-incompatible contract change for existing callers."
+    }
+  ],
+  "cleanFiles": ["currency.mjs"]
+}

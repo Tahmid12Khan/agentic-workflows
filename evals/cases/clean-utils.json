@@ -1,0 +1,6 @@
+{
+  "name": "clean-utils",
+  "dir": "fixtures/clean-utils",
+  "seeded": [],
+  "cleanFiles": ["greet.mjs"]
+}

@@ -46,8 +46,21 @@ test('report.mjs ignores --out/--html and writes the per-run folder', () => {
   const r = runReport(validPayload(), { cwd, args: ['--out', 'REVIEW.md', '--html', 'REVIEW.html'] });
   assert.equal(r.status, 0);
   assert.ok(!existsSync(join(cwd, 'REVIEW.md')), 'must NOT write REVIEW.md');
-  const dateDirs = readdirSync(join(cwd, '.adverserial-code-review')).filter((d) => d.startsWith('review-'));
+  const dateDirs = readdirSync(join(cwd, '.adversarial-code-review')).filter((d) => d.startsWith('review-'));
   assert.ok(dateDirs.length === 1, 'must create the per-run date folder');
+});
+
+// WS9: `.adverserial-code-review` (typo) → `.adversarial-code-review` (correct). One release
+// cycle of migration support: with no --base-dir, an install that still only has the OLD dir
+// (no new one yet) keeps writing into it rather than silently forking state into a fresh dir.
+test('report.mjs writes into the old .adverserial-code-review dir when only it exists (no --base-dir)', () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'acr-migrate-'));
+  mkdirSync(join(cwd, '.adverserial-code-review'), { recursive: true });
+  const r = runReport(validPayload(), { cwd });
+  assert.equal(r.status, 0);
+  assert.ok(!existsSync(join(cwd, '.adversarial-code-review')), 'must not also create the new dir');
+  const dateDirs = readdirSync(join(cwd, '.adverserial-code-review')).filter((d) => d.startsWith('review-'));
+  assert.ok(dateDirs.length === 1, 'must write the per-run folder into the pre-existing old dir');
 });
 
 const LIB = fileURLToPath(new URL('../lib/', import.meta.url));
@@ -143,6 +156,38 @@ test('context-pack.mjs emits enclosing defs + in-repo callers from a real diff',
   } finally { rmSync(repo, { recursive: true, force: true }); }
 });
 
+test('context-pack.mjs --stats-out writes the same stats as JSON, without touching stdout', () => {
+  const repo = mkdtempSync(join(tmpdir(), 'acr-ctx-stats-'));
+  const git = (...a) => execFileSync('git', a, { cwd: repo, stdio: ['pipe', 'pipe', 'pipe'] });
+  try {
+    git('init', '-q');
+    git('config', 'user.email', 't@t'); git('config', 'user.name', 't');
+    writeFileSync(join(repo, 'math.mjs'), 'export function add(a, b) {\n  return a + b;\n}\n');
+    writeFileSync(join(repo, 'caller.mjs'), "import { add } from './math.mjs';\nconsole.log(add(1, 2));\n");
+    git('add', '-A'); git('commit', '-qm', 'init');
+    writeFileSync(join(repo, 'math.mjs'), 'export function add(a, b) {\n  const s = a + b;\n  return s;\n}\n');
+    writeFileSync(join(repo, 'diff.txt'), execFileSync('git', ['diff'], { cwd: repo, encoding: 'utf8' }));
+    const statsPath = join(repo, 'context-stats.json');
+    const out = execFileSync(node, [join(LIB, 'context-pack.mjs'), '--diff', join(repo, 'diff.txt'), '--stats-out', statsPath], { cwd: repo, encoding: 'utf8' });
+    assert.match(out, /CONTEXT PACK/);           // stdout still holds the pack text, not the stats
+    assert.doesNotMatch(out, /sizeBytes/);
+    const stats = JSON.parse(readFileSync(statsPath, 'utf8'));
+    assert.equal(stats.files, 1);
+    assert.ok(stats.callerHits > 0);             // caller.mjs references add() (import line + call site)
+    assert.ok(stats.sizeBytes > 0);
+  } finally { rmSync(repo, { recursive: true, force: true }); }
+});
+
+test('context-pack.mjs --stats-out failure degrades silently (pack still reaches stdout)', () => {
+  const repo = mkdtempSync(join(tmpdir(), 'acr-ctx-stats-bad-'));
+  try {
+    writeFileSync(join(repo, 'diff.txt'), '');
+    // an unwritable path (nonexistent parent dir) — writeFileSync throws, caught and ignored
+    const out = execFileSync(node, [join(LIB, 'context-pack.mjs'), '--diff', join(repo, 'diff.txt'), '--stats-out', join(repo, 'no-such-dir', 'stats.json')], { cwd: repo, encoding: 'utf8' });
+    assert.match(out, /no changed source files/);
+  } finally { rmSync(repo, { recursive: true, force: true }); }
+});
+
 test('context-pack.mjs degrades to a note when the diff has no changed source files', () => {
   const repo = mkdtempSync(join(tmpdir(), 'acr-ctx-empty-'));
   try {
@@ -167,18 +212,43 @@ test('report.mjs writes review.md + review.html and blocks on a critical finding
       plan,
       agentRuns: { 'vuln-reviewer': 1 },
     });
-    const out = run('report.mjs', ['--base-dir', join(tmp, '.adverserial-code-review')], { input, cwd: tmp });
+    const out = run('report.mjs', ['--base-dir', join(tmp, '.adversarial-code-review')], { input, cwd: tmp });
     assert.match(out, /Verdict: BLOCK/);
     assert.match(out, /ACTION: 1 item/);
-    const dateDirs = readdirSync(join(tmp, '.adverserial-code-review')).filter((d) => d.startsWith('review-'));
+    const dateDirs = readdirSync(join(tmp, '.adversarial-code-review')).filter((d) => d.startsWith('review-'));
     assert.ok(dateDirs.length === 1);
-    const dateDir = join(tmp, '.adverserial-code-review', dateDirs[0]);
+    const dateDir = join(tmp, '.adversarial-code-review', dateDirs[0]);
     const runDirs = readdirSync(dateDir);
     assert.ok(runDirs.length === 1);
     const runDir = join(dateDir, runDirs[0]);
     assert.ok(existsSync(join(runDir, 'review.md')));
     assert.ok(existsSync(join(runDir, 'review.html')));
     assert.match(readFileSync(join(runDir, 'review.html'), 'utf8'), /Needs your input/);
+    // WS6: machine-readable severity line on stdout + verdict.json in the run folder
+    assert.match(out, /acr-severity: \{.*"critical":1.*"verdict":"BLOCK".*\}/);
+    assert.ok(existsSync(join(runDir, 'verdict.json')));
+    const vj = JSON.parse(readFileSync(join(runDir, 'verdict.json'), 'utf8'));
+    assert.equal(vj.critical, 1);
+    assert.equal(vj.verdict, 'BLOCK');
+    assert.equal(vj.preExisting, 0);
+  } finally { rmSync(tmp, { recursive: true, force: true }); }
+});
+
+test('WS6: gate.block_on:[critical,important] blocks on an important finding (CLI)', () => {
+  const tmp = mkdtempSync(join(tmpdir(), 'acr-blockon-'));
+  try {
+    const plan = { tier: 'standard', dimensions: ['D2'], dimensionLabels: { D2: 'Correctness' },
+                   dimensionAgents: { D2: 'correctness-reviewer' }, models: { D2: 'sonnet' },
+                   runVerify: false, sharded: false, shards: [], agents: ['correctness-reviewer'] };
+    const input = JSON.stringify({
+      tier: 'standard',
+      findings: [{ dimension: 'D2', severity: 'important', file: 'a.ts', line: 3, title: 'bug', confidence: 92 }],
+      criteria: [], gate: { block_on: ['critical', 'important'], warn_on: ['high'] },
+      plan, agentRuns: { 'correctness-reviewer': 1 },
+    });
+    const out = run('report.mjs', ['--base-dir', join(tmp, '.adversarial-code-review')], { input, cwd: tmp });
+    assert.match(out, /Verdict: BLOCK/);
+    assert.match(out, /acr-severity: \{.*"important":1.*"verdict":"BLOCK".*\}/);
   } finally { rmSync(tmp, { recursive: true, force: true }); }
 });
 
@@ -351,10 +421,10 @@ test('history.mjs degrades to an empty prior on an empty diff', () => {
 test('test-signal.mjs runs the configured command and reports pass / fail+names / not-configured', () => {
   const mk = () => {
     const cwd = mkdtempSync(join(tmpdir(), 'acr-ts-'));
-    mkdirSync(join(cwd, '.adverserial-code-review'), { recursive: true });
+    mkdirSync(join(cwd, '.adversarial-code-review'), { recursive: true });
     return cwd;
   };
-  const write = (cwd, cfg) => writeFileSync(join(cwd, '.adverserial-code-review', 'config.json'), JSON.stringify(cfg));
+  const write = (cwd, cfg) => writeFileSync(join(cwd, '.adversarial-code-review', 'config.json'), JSON.stringify(cfg));
   const runTS = (cwd) => JSON.parse(execFileSync(node, [join(LIB, 'test-signal.mjs')], { cwd, encoding: 'utf8' }));
 
   // passing command
@@ -381,10 +451,23 @@ test('test-signal.mjs runs the configured command and reports pass / fail+names 
   rmSync(cwd, { recursive: true, force: true });
 });
 
+// WS9: `.adverserial-code-review` (typo) → `.adversarial-code-review` (correct). One release
+// cycle of migration support: an install that still only has the OLD dir keeps working.
+test('test-signal.mjs falls back to the old .adverserial-code-review dir when the new one is absent', () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'acr-ts-migrate-'));
+  try {
+    mkdirSync(join(cwd, '.adverserial-code-review'), { recursive: true });
+    writeFileSync(join(cwd, '.adverserial-code-review', 'config.json'), JSON.stringify({ tests: { command: `${JSON.stringify(node)} -e "process.exit(0)"` } }));
+    const out = JSON.parse(execFileSync(node, [join(LIB, 'test-signal.mjs')], { cwd, encoding: 'utf8' }));
+    assert.equal(out.ran, true);
+    assert.equal(out.passed, true);
+  } finally { rmSync(cwd, { recursive: true, force: true }); }
+});
+
 test('plan.mjs --incremental narrows to prevHead..head on a fast-forward, falls open to base..head on a rebase (S9)', () => {
   const repo = mkdtempSync(join(tmpdir(), 'acr-inc-'));
   const g = (...a) => execFileSync('git', a, { cwd: repo, stdio: ['pipe', 'pipe', 'pipe'] }).toString();
-  const acrDir = join(repo, '.adverserial-code-review');
+  const acrDir = join(repo, '.adversarial-code-review');
   const writeLast = (o) => { mkdirSync(acrDir, { recursive: true }); writeFileSync(join(acrDir, 'last-review.json'), JSON.stringify(o)); };
   try {
     g('init', '-q');
@@ -430,7 +513,7 @@ test('plan.mjs --incremental narrows to prevHead..head on a fast-forward, falls 
 
 test('report.mjs script-writes last-review.json and marks new findings under --incremental (S9)', () => {
   const tmp = mkdtempSync(join(tmpdir(), 'acr-inc-report-'));
-  const baseDir = join(tmp, '.adverserial-code-review');
+  const baseDir = join(tmp, '.adversarial-code-review');
   try {
     mkdirSync(baseDir, { recursive: true });
     // a prior review recorded one finding at an earlier head

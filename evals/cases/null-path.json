@@ -1,0 +1,13 @@
+{
+  "name": "null-path",
+  "dir": "fixtures/null-path",
+  "seeded": [
+    {
+      "file": "user.mjs",
+      "line": 4,
+      "class": "null-path",
+      "description": "getAvatarUrl dereferences user.profile.avatar.url without checking user/profile/avatar for null — crashes for any user who has not completed onboarding."
+    }
+  ],
+  "cleanFiles": ["formatters.mjs"]
+}

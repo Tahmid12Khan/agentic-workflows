@@ -194,7 +194,7 @@ All `node` invocations use `command node` (already fixed) to bypass shell `node`
 
 ## 9. Conventions & golden-rules compliance
 
-- **Advisory, never edits source (golden rule #1):** unchanged. Workflow agents are the existing read-only reviewers; only review artifacts under `.adverserial-code-review/` are written.
+- **Advisory, never edits source (golden rule #1):** unchanged. Workflow agents are the existing read-only reviewers; only review artifacts under `.adversarial-code-review/` are written.
 - **Zero runtime deps (#2):** the Workflow DSL is provided by the harness; `lib/review-workflow.mjs` imports no npm packages.
 - **Degrade, never crash (#3):** §4 error handling.
 - **Determinism (#4):** no `Date`/random in identity-generating code; the Workflow uses `args`-supplied timestamps (Workflow scripts cannot call `Date.now()`).

@@ -1,0 +1,102 @@
+{
+  "label": "2026-07-09",
+  "cases": [
+    {
+      "name": "breaking-api-change",
+      "skipped": true,
+      "reason": "model-gated: set ACR_EVAL_LIVE=1 to attempt a live claude -p run",
+      "recall": null,
+      "precision": null,
+      "verifyPass": null
+    },
+    {
+      "name": "clean-utils",
+      "skipped": true,
+      "reason": "model-gated: set ACR_EVAL_LIVE=1 to attempt a live claude -p run",
+      "recall": null,
+      "precision": null,
+      "verifyPass": null
+    },
+    {
+      "name": "clean-validation",
+      "skipped": true,
+      "reason": "model-gated: set ACR_EVAL_LIVE=1 to attempt a live claude -p run",
+      "recall": null,
+      "precision": null,
+      "verifyPass": null
+    },
+    {
+      "name": "missing-authz",
+      "skipped": true,
+      "reason": "model-gated: set ACR_EVAL_LIVE=1 to attempt a live claude -p run",
+      "recall": null,
+      "precision": null,
+      "verifyPass": null
+    },
+    {
+      "name": "missing-migration-reversal",
+      "skipped": true,
+      "reason": "model-gated: set ACR_EVAL_LIVE=1 to attempt a live claude -p run",
+      "recall": null,
+      "precision": null,
+      "verifyPass": null
+    },
+    {
+      "name": "n-plus-one",
+      "skipped": true,
+      "reason": "model-gated: set ACR_EVAL_LIVE=1 to attempt a live claude -p run",
+      "recall": null,
+      "precision": null,
+      "verifyPass": null
+    },
+    {
+      "name": "null-path",
+      "skipped": true,
+      "reason": "model-gated: set ACR_EVAL_LIVE=1 to attempt a live claude -p run",
+      "recall": null,
+      "precision": null,
+      "verifyPass": null
+    },
+    {
+      "name": "off-by-one",
+      "skipped": true,
+      "reason": "model-gated: set ACR_EVAL_LIVE=1 to attempt a live claude -p run",
+      "recall": null,
+      "precision": null,
+      "verifyPass": null
+    },
+    {
+      "name": "race",
+      "skipped": true,
+      "reason": "model-gated: set ACR_EVAL_LIVE=1 to attempt a live claude -p run",
+      "recall": null,
+      "precision": null,
+      "verifyPass": null
+    },
+    {
+      "name": "secret-in-log",
+      "skipped": true,
+      "reason": "model-gated: set ACR_EVAL_LIVE=1 to attempt a live claude -p run",
+      "recall": null,
+      "precision": null,
+      "verifyPass": null
+    },
+    {
+      "name": "sql-injection",
+      "skipped": true,
+      "reason": "model-gated: set ACR_EVAL_LIVE=1 to attempt a live claude -p run",
+      "recall": null,
+      "precision": null,
+      "verifyPass": null
+    }
+  ],
+  "aggregate": {
+    "totalCases": 11,
+    "scoredCases": 0,
+    "skippedCases": 11,
+    "meanRecall": null,
+    "meanPrecision": null,
+    "totalFpsKilled": 0,
+    "totalWronglyDropped": 0
+  }
+}

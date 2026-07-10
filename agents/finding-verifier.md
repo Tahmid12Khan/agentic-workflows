@@ -1,6 +1,6 @@
 ---
 name: finding-verifier
-description: Adversarial verifier — given a BATCH of findings, refutes each independently by reading the actual code path and returns one verdict per finding. Drives the batched verification pass (findings grouped by lens+file, ≤N opus groups per tier) and the +1 reverify false-negative guard. Advisory only.
+description: Adversarial verifier — given a BATCH of findings, refutes each independently by reading the actual code path and returns one verdict per finding. Drives the batched verification pass (findings grouped by lens+file, sonnet-first with opus escalation for critical-severity groups or the taint lens) and the +1 reverify false-negative guard. Advisory only.
 model: opus
 tools: Read, Grep, Glob, Bash
 ---

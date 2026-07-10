@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { renderReport, renderVerdict, renderHtml, agentCoverage, testSignalText } from '../lib/render.mjs';
+import { renderReport, renderVerdict, renderHtml, agentCoverage, testSignalText, tallyLine, contextPackStatsLine } from '../lib/render.mjs';
 
 const findings = [
   { dimension: 'D3', severity: 'critical', file: 'src/auth.ts', line: 42, title: 'Missing authz', confidence: 95, evidence: 'no role check', fix: 'add requirePermission' },
@@ -45,6 +45,27 @@ test('only confidence>=80 findings are rendered', () => {
   const noisy = [...findings, { dimension: 'D2', severity: 'minor', file: 'x', line: 1, title: 'low conf', confidence: 50 }];
   const md = renderReport({ findings: noisy, criteria, tier: 'standard' });
   assert.doesNotMatch(md, /low conf/);
+});
+
+test('MIN_CONFIDENCE exact boundary: 80 is rendered, 79 is held back (md + html)', () => {
+  const at80 = [{ dimension: 'D2', severity: 'minor', file: 'a.ts', line: 1, title: 'boundary-hit', confidence: 80 }];
+  const at79 = [{ dimension: 'D2', severity: 'minor', file: 'a.ts', line: 1, title: 'boundary-miss', confidence: 79 }];
+  assert.match(renderReport({ findings: at80, criteria: [], tier: 'standard' }), /boundary-hit/);
+  assert.doesNotMatch(renderReport({ findings: at79, criteria: [], tier: 'standard' }), /boundary-miss/);
+  assert.match(renderHtml({ findings: at80, criteria: [], tier: 'standard' }), /boundary-hit/);
+  assert.doesNotMatch(renderHtml({ findings: at79, criteria: [], tier: 'standard' }), /boundary-miss/);
+});
+
+test('renderVerdict exact boundary: confidence 80 blocks on critical, 79 does not', () => {
+  const gate = { block_on: ['critical'], warn_on: ['important'] };
+  assert.equal(renderVerdict([{ severity: 'critical', confidence: 80 }], gate).verdict, 'BLOCK');
+  assert.equal(renderVerdict([{ severity: 'critical', confidence: 79 }], gate).verdict, 'APPROVE');
+});
+
+test('renderHtml footer states the advisory-only invariant + the /review-respond --fix opt-in', () => {
+  const html = renderHtml({ findings, criteria, tier: 'standard' });
+  assert.match(html, /advisory/);
+  assert.match(html, /\/review-respond --fix/);
 });
 
 test('traceability leads with the requirement name, keeps the AC id as a tag', () => {
@@ -181,6 +202,34 @@ test('reports render an Agents & coverage section in markdown and HTML', () => {
   const html = renderHtml({ findings, criteria, tier: 'standard', coverage });
   assert.match(html, /Agents &amp; coverage/);
   assert.match(html, /finding-verifier/);
+});
+
+// --- WS7 S3: context pack size/per-section stats surfaced in Agents & coverage ---
+test('contextPackStatsLine formats the pack stats, or null when absent', () => {
+  assert.equal(contextPackStatsLine(null), null);
+  const line = contextPackStatsLine({ sizeBytes: 12345, files: 3, imports: 2, callerHits: 5, hop2: 1, typeBoundary: 0 });
+  assert.match(line, /12345B/);
+  assert.match(line, /3 file\(s\)/);
+  assert.match(line, /callers 5/);
+  assert.match(line, /hop-2 1/);
+  assert.match(line, /type-boundary 0/);
+});
+
+test('Agents & coverage section gains a context-pack line when stats are provided', () => {
+  const coverage = agentCoverage(standardPlan);
+  const contextPackStats = { sizeBytes: 4096, files: 2, imports: 1, callerHits: 3, hop2: 0, typeBoundary: 1 };
+  const md = renderReport({ findings, criteria, tier: 'standard', coverage, contextPackStats });
+  assert.match(md, /Context pack: 4096B across 2 file\(s\)/);
+  const html = renderHtml({ findings, criteria, tier: 'standard', coverage, contextPackStats });
+  assert.match(html, /Context pack: 4096B across 2 file\(s\)/);
+});
+
+test('Agents & coverage section is unchanged when contextPackStats is absent', () => {
+  const coverage = agentCoverage(standardPlan);
+  const md = renderReport({ findings, criteria, tier: 'standard', coverage });
+  assert.doesNotMatch(md, /Context pack:/);
+  const html = renderHtml({ findings, criteria, tier: 'standard', coverage });
+  assert.doesNotMatch(html, /Context pack:/);
 });
 
 test('reports show PR number and start/finish timestamps from meta', () => {
@@ -331,4 +380,39 @@ test('out-of-diff findings never affect the verdict (excluded from the gate)', (
   // a critical, out-of-diff finding rides in outOfDiff — the gated `findings` list is empty → APPROVE
   const md = renderReport({ findings: [], criteria, tier: 'standard', outOfDiff: [{ file: 'x', line: 1, title: 'crit', severity: 'critical', confidence: 100 }] });
   assert.match(md, /## Verdict: APPROVE/);
+});
+
+test('WS1 process advisories: rendered in their own section, never affect the verdict', () => {
+  const proc = [{ kind: 'change-size', severity: 'suggestion', message: 'Large change: ~1200 changed lines' }];
+  const md = renderReport({ findings: [], criteria, tier: 'standard', processAdvisories: proc });
+  assert.match(md, /## Process advisories \(1\)/);
+  assert.match(md, /Large change: ~1200 changed lines/);
+  assert.match(md, /advisory only, never gate-affecting/i);
+  assert.match(md, /## Verdict: APPROVE/);            // advisory never gates
+  const html = renderHtml({ findings: [], criteria, tier: 'standard', processAdvisories: proc });
+  assert.match(html, /Process advisories/);
+  assert.match(html, /Large change: ~1200 changed lines/);
+  // absent → no section
+  assert.doesNotMatch(renderReport({ findings, criteria, tier: 'standard' }), /Process advisories/);
+});
+
+// --- WS9: report summary tally line ---
+test('tallyLine: counts by severity + pre-existing, in fixed order, dropping zero counts', () => {
+  const kept = [
+    { severity: 'important' }, { severity: 'important' },
+    { severity: 'minor' }, { severity: 'minor' }, { severity: 'minor' },
+  ];
+  assert.equal(tallyLine(kept, 1, 'WARN'), '2 important, 3 minor, 1 pre-existing — WARN');
+  assert.equal(tallyLine([], 0, 'APPROVE'), 'no findings — APPROVE');
+});
+
+test('the tally line leads the md report right under the title, and its counts mirror the report', () => {
+  const md = renderReport({ findings, criteria, tier: 'high' }); // module-level `findings`: 1 critical, 1 minor
+  assert.match(md, /^# Code Review — high\n\n\*\*1 critical, 1 minor — BLOCK\*\*\n/);
+});
+
+test('html counts row gains a pre-existing pill mirroring the md tally', () => {
+  const outOfDiff = [{ file: 'x', line: 1, title: 'stale bug', severity: 'critical', confidence: 100 }];
+  const html = renderHtml({ findings: [], criteria, tier: 'standard', outOfDiff });
+  assert.match(html, /<span class="pill">1 pre-existing<\/span>/);
 });

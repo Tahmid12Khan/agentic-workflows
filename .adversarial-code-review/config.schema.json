@@ -12,6 +12,7 @@
       "additionalProperties": false
     },
     "mandatory_checks": { "type": "array", "items": { "type": "string" } },
+    "fanin_threshold": { "type": "integer", "minimum": 0, "description": "Distinct in-repo files (outside the diff) importing a changed file, at/above which lib/triage.mjs bumps the auto-computed tier one level (low→standard, standard→high; never above high). Catches a one-line change to a widely-imported module that lexical signals alone would leave at low/standard tier. Default 20; 0 disables." },
     "project_rules": { "type": "array", "items": { "type": "string" } },
     "review_instructions": { "type": "string" },
     "always_dims": {
@@ -71,6 +72,7 @@
         "model_first": { "type": "string", "description": "Model for the first (cheap) verifier pass. Default 'sonnet'." },
         "model_escalate": { "type": "string", "description": "Model the verifier escalates to on an uncertain or hot-refuted verdict, and runs directly for the severities in escalate_direct_severity. Its verdict is authoritative — the cheap one is discarded. Default 'opus'." },
         "escalate_direct_severity": { "type": "array", "items": { "type": "string", "enum": ["critical", "important", "minor", "suggestion"] }, "description": "Severities that skip the cheap pass and go straight to model_escalate. Default ['critical']." },
+        "max_verifier_agents": { "type": "integer", "minimum": 1, "description": "Per-run cap on batched verifier groups (default per-tier: trivial 0, low 3, standard 5, high/critical 8). An explicit flat value here wins over the per-tier default; by_tier.<tier>.max_verifier_agents wins over both." },
         "by_tier": {
           "type": "object",
           "description": "Per-tier overrides of the verify keys above. A tier entry (trivial/low/standard/high/critical) overrides the flat keys for that resolved tier; the flat keys stay the base. reverify_below is clamped up to report_confidence per tier so a per-tier relaxation can lower both together (fewer verifier spawns) but never opens a [reverify_below, report_confidence) dead band. Defaults keep 80/80 on every tier, so worst-case rigor is unchanged unless a project opts in here.",
@@ -168,6 +170,30 @@
       },
       "additionalProperties": false
     },
+    "feedback": {
+      "type": "object",
+      "description": "PR-reaction feedback loop (WS2): after --comment posts an inline finding comment, comments.mjs seeds both 👍/👎 reactions so a one-click vote is possible; a later review of the same PR harvests non-seed reactions + reply text via feedback.mjs and folds them into the learnings store (learning.store) — 👎 becomes an accepted false-positive (also injected pre-generation into future reviewer packets as a known-false-positive block); 👍 alone is a no-op, recording no signal and never skipping verification. Gated by learning.enabled (no store, no harvest).",
+      "properties": {
+        "store": { "type": "string", "description": "Path to the posted-comment-id state file (default '.adversarial-code-review/posted-comments.json')." }
+      },
+      "additionalProperties": false
+    },
+    "rereview": {
+      "type": "object",
+      "description": "Re-review convergence (WS3): on a later review of the same PR, resolved findings get their GitHub thread replied-to-and-resolved, persisting findings are never re-posted, and this block tunes how aggressively nits taper off across rounds.",
+      "properties": {
+        "nit_rounds": { "type": "integer", "minimum": 0, "description": "Number of re-review rounds (starting at 1, the first review) minor/suggestion findings still post as PR comments. From round nit_rounds+1 on they are report-only. Default 1 (Anthropic's REVIEW.md guidance: important-only after round 1)." }
+      },
+      "additionalProperties": false
+    },
+    "report": {
+      "type": "object",
+      "description": "Report-rendering knobs that are not part of the gate/verify policy.",
+      "properties": {
+        "max_posted_nits": { "type": "integer", "minimum": 0, "description": "Cap on how many minor/suggestion findings comments.mjs posts as PR comments in one run (top-N by confidence; default 5). The report file always lists every finding regardless — this only trims PR-comment noise." }
+      },
+      "additionalProperties": false
+    },
     "notify": {
       "type": "object",
       "properties": {
@@ -237,7 +263,8 @@
         "escalate_uncertain": { "type": "boolean" },
         "model_first": { "type": "string" },
         "model_escalate": { "type": "string" },
-        "escalate_direct_severity": { "type": "array", "items": { "type": "string", "enum": ["critical", "important", "minor", "suggestion"] } }
+        "escalate_direct_severity": { "type": "array", "items": { "type": "string", "enum": ["critical", "important", "minor", "suggestion"] } },
+        "max_verifier_agents": { "type": "integer", "minimum": 1 }
       },
       "additionalProperties": false
     },

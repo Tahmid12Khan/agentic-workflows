@@ -60,7 +60,7 @@ Output ONLY JSON (the union of both former contracts):
   "model": "2-4 sentence domain summary",
   "assumptions": [{ "text": "", "grounded": true, "source": "PR|commit|ticket|code|none" }],
   "openQuestions": [{ "question": "", "file": "", "why": "why it matters and why you cannot resolve it" }],
-  "businessRisks": [{ "text": "", "severity": "critical|important|minor" }]
+  "businessRisks": [{ "text": "", "severity": "critical|important|minor|suggestion" }]
 }
 
 `acceptanceCriteria` is REQUIRED — emit it even when you had to derive it from commits + diff shape. Advisory only — you never modify code.

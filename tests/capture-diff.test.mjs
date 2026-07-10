@@ -11,9 +11,9 @@ import { diffArgs } from '../lib/capture-diff.mjs';
 
 const CAPTURE = new URL('../lib/capture-diff.mjs', import.meta.url).pathname;
 
-test('diffArgs builds a two-dot, no-color range (head defaults to HEAD)', () => {
-  assert.deepEqual(diffArgs('abc'), ['diff', '--no-color', 'abc..HEAD']);
-  assert.deepEqual(diffArgs('abc', 'def'), ['diff', '--no-color', 'abc..def']);
+test('diffArgs builds a two-dot, no-color range (head defaults to HEAD), quotepath disabled', () => {
+  assert.deepEqual(diffArgs('abc'), ['-c', 'core.quotePath=false', 'diff', '--no-color', 'abc..HEAD']);
+  assert.deepEqual(diffArgs('abc', 'def'), ['-c', 'core.quotePath=false', 'diff', '--no-color', 'abc..def']);
 });
 
 test('capture-diff exits 2 without --base', () => {
@@ -42,4 +42,24 @@ test('capture-diff emits a RAW unified diff (diff --git / @@ markers intact)', (
   assert.match(out.stdout, /^diff --git a\/a\.ts b\/a\.ts$/m);
   assert.match(out.stdout, /^@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@/m);
   assert.match(out.stdout, /^\+const y = 2;$/m);
+});
+
+test('capture-diff emits a non-ASCII path raw, never quoted+octal-escaped (core.quotePath=false)', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'acr-cap-'));
+  const git = (...a) => execFileSync('git', a, { cwd: dir, stdio: ['pipe', 'pipe', 'pipe'] });
+  git('init', '-q');
+  git('config', 'user.email', 't@t');
+  git('config', 'user.name', 't');
+  writeFileSync(join(dir, 'a.ts'), 'const x = 1;\n');
+  git('add', 'a.ts');
+  git('commit', '-qm', 'base');
+  const base = git('rev-parse', 'HEAD').toString().trim();
+  writeFileSync(join(dir, 'café.ts'), 'const y = 2;\n');
+  git('add', 'café.ts');
+  git('commit', '-qm', 'add unicode file');
+
+  const out = spawnSync(process.execPath, [CAPTURE, '--base', base], { cwd: dir, encoding: 'utf8' });
+  assert.equal(out.status, 0);
+  assert.match(out.stdout, /^\+\+\+ b\/café\.ts$/m);
+  assert.doesNotMatch(out.stdout, /"b\/caf/);
 });

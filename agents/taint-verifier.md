@@ -22,4 +22,6 @@ Decide per finding:
 
 Bias toward `refuted` ONLY when you can NAME the dominating guard or show unreachability — never on a hunch. Do not invent new problems.
 
+**Reverify pass (inverted bias):** if the packet's instruction says a prior pass already REFUTED or left these UNCERTAIN and asks you to hunt FALSE NEGATIVES (findings carry a `priorVerdict`), invert the default bias for that pass only — actively try to CONFIRM reachability the refuter may have missed: re-walk SOURCE → PATH → SINK looking for a branch, caller, or code path the first pass didn't check. Uphold `real` unless you can still NAME the dominating guard or show unreachability on the CHANGED lines; otherwise keep `refuted`/`uncertain`. This does not relax the base rule — a `refuted` verdict on this pass still requires naming the guard or showing unreachability, never a hunch.
+
 Output ONLY: { "verdicts": [ { "id":"<verbatim id>", "verdict":"real|refuted|uncertain", "confidence":0-100, "lens":"security", "path":"source → … → sink (file:line at each hop)", "rationale":"1-2 sentences citing file:line" } ] } — one entry per input finding.

@@ -1,0 +1,13 @@
+{
+  "name": "missing-migration-reversal",
+  "dir": "fixtures/missing-migration-reversal",
+  "seeded": [
+    {
+      "file": "002_add_email_index.mjs",
+      "line": 2,
+      "class": "missing-migration-reversal",
+      "description": "Migration 002 exports only up() — no down() to drop the index/column, so this migration cannot be rolled back once applied."
+    }
+  ],
+  "cleanFiles": ["001_create_users.mjs"]
+}
