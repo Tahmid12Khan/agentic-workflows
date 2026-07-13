@@ -3,6 +3,13 @@
 Release log for the **adversarial-code-review** plugin. Newest first. The forward-looking
 plan lives in [ROADMAP.md](ROADMAP.md). Source-of-truth version: `.claude-plugin/plugin.json`.
 
+## v0.21.2
+
+**Calmer, professional reviewer voice — Socratic framing dropped.**
+
+- **Voice rule reworded** in all 14 dimension reviewers + `review-synthesizer`: from "formal but plain Socratic" (open the `title` with a question) to **professional, calm, and plain** — findings are stated directly, not as questions. Still two beats: the ISSUE (`title` states plainly what is wrong and its consequence) and the SOLUTION (`fix` says what to change and why). New guardrail: critique the code and the gap, never the author — no blame, sarcasm, or reproach (e.g. no "even after being asked", "still", "as I said before") — but courtesy must not blur the problem; the issue and its fix stay explicit. The `review-synthesizer` keeps genuine OPEN QUESTIONS to the author as real questions; only the rhetorical framing of findings is dropped.
+- No behavior change beyond the reviewer prose: `fixCode`/`line`/`endLine` and the line-range one-click suggestion are untouched.
+
 ## v0.21.1
 
 **Formal, plain-English reviewer voice.**
