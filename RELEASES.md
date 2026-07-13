@@ -3,6 +3,13 @@
 Release log for the **adversarial-code-review** plugin. Newest first. The forward-looking
 plan lives in [ROADMAP.md](ROADMAP.md). Source-of-truth version: `.claude-plugin/plugin.json`.
 
+## v0.21.1
+
+**Formal, plain-English reviewer voice.**
+
+- **Voice rule reworded** in all 14 dimension reviewers + `review-synthesizer`: from "concise, one short sentence" to **formal but plain Socratic** — simple everyday English a non-native reader can follow, structured in two beats: the **ISSUE** (open the `title` with the question the code fails to answer, then state the problem in one plain sentence) and the **SOLUTION** (in `fix`, say plainly what to change and why, in one or two short sentences), glossing any unavoidable jargon. The machine-applicable suggestion is untouched: `fixCode`/`line`/`endLine` still drive the one-click `` ```suggestion `` block on the line range — voice only reshapes the prose `title`/`fix`.
+- **Doc-comment fix** in `lib/comments.mjs`: the fixCode-absent fallback is now described as a "short prose fix" (was "one-line") to match the slightly longer prose the new voice allows; the rendering is unchanged (`buildCommentBody` already joins multi-line text).
+
 ## v0.21.0
 
 **Review-output voice + line-range locations.**
