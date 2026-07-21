@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { renderReport, renderVerdict, renderHtml, agentCoverage, testSignalText, tallyLine, contextPackStatsLine } from '../lib/render.mjs';
+import { renderReport, renderVerdict, renderHtml, agentCoverage, testSignalText, tallyLine, contextPackStatsLine, filesCappedWarning } from '../lib/render.mjs';
 
 const findings = [
   { dimension: 'D3', severity: 'critical', file: 'src/auth.ts', line: 42, title: 'Missing authz', confidence: 95, evidence: 'no role check', fix: 'add requirePermission' },
@@ -20,6 +20,33 @@ test('report groups by severity and includes traceability matrix', () => {
   assert.match(md, /Missing authz/);
   assert.match(md, /AC1/);
   assert.match(md, /only admins can delete/);
+});
+
+// --- file-count cap WARN ---
+test('filesCappedWarning: null when nothing capped, loud WARN naming counts when capped', () => {
+  assert.equal(filesCappedWarning(null), null);
+  assert.equal(filesCappedWarning({ max: 200, total: 200, reviewed: 200, dropped: 0 }), null);   // no drop → no warn
+  const w = filesCappedWarning({ max: 200, total: 250, reviewed: 200, dropped: 50 });
+  assert.match(w, /WARN/);
+  assert.match(w, /250/);   // total
+  assert.match(w, /200/);   // reviewed / max
+  assert.match(w, /50/);    // dropped
+  assert.match(w, /may be missed/i);
+});
+
+test('renderReport + renderHtml surface the files-capped WARN near the top', () => {
+  const capped = { max: 200, total: 217, reviewed: 200, dropped: 17 };
+  const md = renderReport({ findings, criteria, tier: 'high', filesCapped: capped });
+  assert.match(md, /WARN — file limit exceeded/);
+  assert.match(md, /217/);          // total files
+  assert.match(md, /\*\*17\*\* were not/);   // dropped count
+  // and absent when not capped
+  assert.doesNotMatch(renderReport({ findings, criteria, tier: 'high' }), /file limit exceeded/);
+  // HTML banner too
+  const html = renderHtml({ findings, criteria, tier: 'high', filesCapped: capped });
+  assert.match(html, /File limit exceeded/);
+  assert.match(html, /217 files changed/);
+  assert.doesNotMatch(renderHtml({ findings, criteria, tier: 'high' }), /File limit exceeded/);
 });
 
 // --- S6.4: executed-test signal in the report header ---

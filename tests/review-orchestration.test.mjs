@@ -147,7 +147,7 @@ test('args-by-reference: the workflow keeps the diff out of args + its own body'
   const ba = readFileSync(new URL('../lib/build-args.mjs', import.meta.url), 'utf8');
   // build-args emits the diff PATH + a precomputed diffIndex, never the diff text.
   assert.match(ba, /diffPath,/, 'build-args must emit diffPath');
-  assert.match(ba, /diffIndex: buildDiffIndex\(diffText\)/, 'build-args must precompute the diffIndex from diff.txt');
+  assert.match(ba, /diffIndex = buildDiffIndex\(diffText\)/, 'build-args must precompute the diffIndex from diff.txt (then restrict it to the reviewed files when capped)');
   assert.doesNotMatch(ba, /\bdiff,\n/, 'build-args must not carry the diff TEXT in args');
   // the sandbox consumes the passed diffIndex for off-diff demotion (it can no longer build one).
   assert.match(wf, /partitionByScope\(synth\.findings \?\? \[\], diffIndex/, 'the workflow must demote using the passed-in diffIndex');

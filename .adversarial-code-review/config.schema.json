@@ -101,7 +101,8 @@
       "properties": {
         "shard_threshold_loc": { "type": "integer", "minimum": 1 },
         "max_shards": { "type": "integer", "minimum": 1, "maximum": 12 },
-        "max_review_aspects": { "type": "integer", "minimum": 1, "description": "Ceiling on total review aspects (≈ reviewer agents) for a sharded diff; shard count is reduced to fit so a many-dimension change never spawns a runaway fan-out. Default 40." }
+        "max_review_aspects": { "type": "integer", "minimum": 1, "description": "Ceiling on total review aspects (≈ reviewer agents) for a sharded diff; shard count is reduced to fit so a many-dimension change never spawns a runaway fan-out. Default 40." },
+        "max_review_files": { "type": "integer", "minimum": 1, "description": "Hard ceiling on the number of changed files actually reviewed. args.json — which the orchestrator model must emit verbatim into the Workflow call — grows one entry per reviewed file (shards/sliceIndex/diffIndex), so past a point the generation drops mid-response. When a diff exceeds this, the highest-risk files (on a risk path first, then largest changes) are kept and the rest dropped, with a WARN in the report that some files were not reviewed. Default 200." }
       },
       "additionalProperties": false
     },

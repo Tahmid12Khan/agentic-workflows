@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { shouldShard, shardFiles, singleShard, cappedMaxShards } from '../lib/shard.mjs';
+import { shouldShard, shardFiles, singleShard, cappedMaxShards, selectReviewFiles } from '../lib/shard.mjs';
 import { verifyPolicy, selectForVerification, resolveVerification, partition, lensFor, firstPassModel, shouldEscalate, groupForVerification } from '../lib/verify.mjs';
 import { applyLearnings, dedupAgainstPrevious, recordRun, findingKey, EMPTY, resolveIncrementalRange, buildLastReview } from '../lib/memory.mjs';
 import { renderHtml } from '../lib/render.mjs';
@@ -36,6 +36,33 @@ test('cappedMaxShards bounds the fan-out (shardedAgents × shards) under maxAspe
   assert.equal(cappedMaxShards(4, 1, 40), 4);       // one agent → config max
   assert.equal(cappedMaxShards(4, 5, 0), 4);        // maxAspects<=0 → no ceiling
   assert.equal(cappedMaxShards(4, 0, 40), 4);       // guard: 0 agents treated as 1
+});
+
+test('selectReviewFiles: under the ceiling, returns all files untouched and capped=null', () => {
+  const files = ['a.js', 'b.js', 'c.js'];
+  const r = selectReviewFiles(files, { max: 200 });
+  assert.deepEqual(r.files, files);
+  assert.equal(r.capped, null);
+  assert.equal(selectReviewFiles(files, { max: 0 }).capped, null);   // max<=0 → no ceiling
+});
+
+test('selectReviewFiles: over the ceiling, keeps risk-path files first, then largest churn, records the drop', () => {
+  // 5 files, cap 3. Risk path "auth" must survive even with low churn; among non-risk, larger churn wins.
+  const files = ['src/util/small.js', 'src/auth/login.js', 'src/util/big.js', 'src/util/mid.js', 'src/util/tiny.js'];
+  const locByFile = new Map([
+    ['src/util/small.js', 2], ['src/auth/login.js', 1], ['src/util/big.js', 90], ['src/util/mid.js', 40], ['src/util/tiny.js', 1],
+  ]);
+  const r = selectReviewFiles(files, { max: 3, riskPaths: ['auth'], locByFile });
+  assert.equal(r.files.length, 3);
+  assert.ok(r.files.includes('src/auth/login.js'), 'the risk-path file is never dropped despite tiny churn');
+  assert.deepEqual(r.files, ['src/auth/login.js', 'src/util/big.js', 'src/util/mid.js']);   // risk first, then churn desc
+  assert.deepEqual(r.capped, { max: 3, total: 5, reviewed: 3, dropped: 2 });
+});
+
+test('selectReviewFiles: deterministic path tie-break when churn + risk are equal', () => {
+  const files = ['z.js', 'a.js', 'm.js'];
+  const r = selectReviewFiles(files, { max: 2 });   // no risk, no loc → all equal → sort by path asc
+  assert.deepEqual(r.files, ['a.js', 'm.js']);
 });
 
 // --- bounded adversarial verification ---

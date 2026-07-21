@@ -6,7 +6,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { buildArgs, mergeEnrich, knownFalsePositives } from '../lib/build-args.mjs';
+import { buildArgs, mergeEnrich, knownFalsePositives, restrictIndexToFiles } from '../lib/build-args.mjs';
 
 const SCRIPT = new URL('../lib/build-args.mjs', import.meta.url).pathname;
 
@@ -38,6 +38,25 @@ test('buildArgs: emits exactly the keys review-workflow.mjs destructures', () =>
   assert.deepEqual(out.history, {});   // S6.3 absent → {} so the workflow attaches nothing
   assert.equal(out.testSignal, null);  // S6.4 absent → null (no --run-tests)
   assert.deepEqual(out.knownFalsePositives, []);   // absent → [] so the workflow prepends no FP block
+});
+
+test('buildArgs: strips the duplicated shards + files from the embedded plan, keeps a shardCount', () => {
+  // The orchestrator model must EMIT args verbatim into the Workflow call; on a many-file PR the
+  // per-file paths were carried ~3× (plan.shards + plan.files + the top-level args.shards), doubling
+  // the plan blob and widening the mid-response-drop window. The embedded plan must NOT re-carry them.
+  const shards = [{ label: 'src', files: ['a.js', 'b.js'] }, { label: 'test', files: ['c.test.js'] }];
+  const out = buildArgs({
+    plan: { tier: 'standard', sharded: true, shards, files: ['a.js', 'b.js', 'c.test.js'], dimensions: ['D1'] },
+    bundle: {}, diffPath: '/d',
+  });
+  assert.equal('shards' in out.plan, false, 'plan.shards is dead weight (workflow reads top-level shards)');
+  assert.equal('files' in out.plan, false, 'plan.files is derivable from shards in the workflow');
+  assert.equal(out.plan.shardCount, 2, 'shard COUNT is kept for render’s coverage line');
+  assert.equal(out.plan.tier, 'standard');           // other plan fields survive
+  assert.deepEqual(out.plan.dimensions, ['D1']);
+  assert.deepEqual(out.shards, shards);              // the SINGLE live copy is top-level args.shards
+  // and the workflow can rebuild the flat file list from args.shards (what its plan.files reconstruct does)
+  assert.deepEqual(out.shards.flatMap((s) => s.files), ['a.js', 'b.js', 'c.test.js']);
 });
 
 test('buildArgs: a provided knownFalsePositives list is carried through', () => {
@@ -94,6 +113,38 @@ test('buildArgs: provided context pack stats are carried through', () => {
   const stats = { sizeBytes: 100, files: 1, imports: 1, callerHits: 2, hop2: 0, typeBoundary: 0 };
   const out = buildArgs({ plan: {}, bundle: {}, diffPath: '/d', contextPackStats: stats });
   assert.deepEqual(out.contextPackStats, stats);
+});
+
+test('restrictIndexToFiles: keeps only reviewed-file entries (normPath both sides), drops the rest', () => {
+  const idx = { 'src/a.js': [[1, 3]], 'src/b.js': [[4, 5]], 'src/c.js': [[6, 7]] };
+  const kept = restrictIndexToFiles(idx, ['src/a.js', 'src/c.js']);
+  assert.deepEqual(Object.keys(kept).sort(), ['src/a.js', 'src/c.js']);
+  // tolerates a/ b/ prefixes on either side via normPath, and empty/absent inputs
+  assert.deepEqual(restrictIndexToFiles({ 'b/src/a.js': 1 }, ['src/a.js']), { 'b/src/a.js': 1 });
+  assert.deepEqual(restrictIndexToFiles({}, ['src/a.js']), {});
+  assert.deepEqual(restrictIndexToFiles({ 'x.js': 1 }, []), {});
+});
+
+test('CLI: when plan.filesCapped is set, sliceIndex + diffIndex are restricted to the reviewed files', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'build-args-cap-'));
+  try {
+    // 2 files change, but the plan reviewed only a.js (capped) — b.js was dropped.
+    writeFileSync(join(dir, 'plan.json'), JSON.stringify({
+      tier: 'high', files: ['a.js'], filesCapped: { max: 1, total: 2, reviewed: 1, dropped: 1 },
+      shards: [{ label: 'all', files: ['a.js'] }],
+    }));
+    writeFileSync(join(dir, 'bundle.json'), '{"summary":"x"}');
+    writeFileSync(join(dir, 'diff.txt'),
+      'diff --git a/a.js b/a.js\n--- a/a.js\n+++ b/a.js\n@@ -1 +1,2 @@\n-a\n+b\n+c\n' +
+      'diff --git a/b.js b/b.js\n--- a/b.js\n+++ b/b.js\n@@ -1 +1,2 @@\n-x\n+y\n+z\n');
+    writeFileSync(join(dir, 'meta.json'), '{}');
+    const r = spawnSync(process.execPath, [SCRIPT, '--dir', dir], { encoding: 'utf8' });
+    assert.equal(r.status, 0, r.stderr);
+    const a = JSON.parse(r.stdout);
+    assert.deepEqual(Object.keys(a.diffIndex), ['a.js'], 'diffIndex drops the unreviewed b.js');
+    assert.deepEqual(Object.keys(a.sliceIndex), ['a.js'], 'sliceIndex drops the unreviewed b.js');
+    assert.deepEqual(a.plan.filesCapped, { max: 1, total: 2, reviewed: 1, dropped: 1 }); // carried through
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
 test('CLI: assembles from --dir and merges enrich.json onto bundle', () => {

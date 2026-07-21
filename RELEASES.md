@@ -3,6 +3,17 @@
 Release log for the **adversarial-code-review** plugin. Newest first. The forward-looking
 plan lives in [ROADMAP.md](ROADMAP.md). Source-of-truth version: `.claude-plugin/plugin.json`.
 
+## v0.23.0
+
+**Any-size reviews: a file-count ceiling that bounds the Workflow payload + a smaller args blob.**
+
+The orchestrator must emit `args.json` verbatim into the `Workflow(...)` call — and it grows one entry per changed file (`shards`/`sliceIndex`/`diffIndex`), so a many-hundred-file PR produced a huge generation that dropped mid-response (`API Error: Connection closed mid-response`). There is no harness by-reference mechanism for a workflow's own args (confirmed against the docs), so the payload is bounded on the file count itself.
+
+- **File-count ceiling** (`large_diff.max_review_files`, default 200): when a change exceeds it, `selectReviewFiles` (`lib/shard.mjs`) keeps the highest-risk files — on a risk path first, then largest churn, deterministic path tie-break — and drops the rest, so anything unreviewed is the least risky. `build-args.mjs` restricts `sliceIndex`/`diffIndex` to the reviewed set (`restrictIndexToFiles`), so `args.json` is bounded **regardless of PR size** (a 217-file and a 5,000-file PR both emit ~62KB). tier/signals/change-size advisories are still computed on the full change.
+- **Files-capped WARN**: `plan.filesCapped` drives a loud WARN at the top of the markdown and HTML report — *"file limit exceeded (max 200): N files changed, only the M highest-risk reviewed — K not reviewed. Issues in the unreviewed files may be missed."* Advisory only — never gates.
+- **Smaller args blob** (−32% on a 217-file PR): `build-args.mjs` strips the redundant `shards` + `files` from the embedded `plan` (the shard/file split is carried once as top-level `args.shards`; the workflow rebuilds `plan.files` by flattening it, and `render.mjs` reads a small `plan.shardCount`). The per-file paths appeared ~3× in the payload; now once.
+- **Doc honesty**: `commands/review.md` no longer claims `args.json` "stays a few KB" — it scales with file count, is the largest thing the orchestrator emits, and is now bounded by the ceiling above.
+
 ## v0.22.0
 
 **Large-diff review hardening + completeness-critic re-dispatch safety.**
