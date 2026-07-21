@@ -3,6 +3,16 @@
 Release log for the **adversarial-code-review** plugin. Newest first. The forward-looking
 plan lives in [ROADMAP.md](ROADMAP.md). Source-of-truth version: `.claude-plugin/plugin.json`.
 
+## v0.22.0
+
+**Large-diff review hardening + completeness-critic re-dispatch safety.**
+
+- **Fan-out ceiling** (`large_diff.max_review_aspects`, default 40): on a big heterogeneous diff many content-gated dimensions activate, so a flat shard split could fan out ~40 reviewer agents — each an API call, widening the transient-overload (529) window and multiplying cost/latency. `cappedMaxShards` (`lib/shard.mjs`, wired in `plan.mjs`) now reduces the shard count so total review aspects ≈ `shardedAgents × shards` stays under the ceiling. Every dimension still runs, over fewer/larger per-agent slices — no coverage dropped. `vuln-reviewer` (D3) is unsharded, so only the other agents multiply by shard count.
+- **Large-PR tiering fix** (`lib/plan.mjs`): the full `git diff` used for signal detection now captures with a 256 MB buffer (matching the other full-diff captures). At Node's default 1 MB a large PR's diff overflowed → threw → caught → empty diff → every content signal read false → the tier silently collapsed to "standard" and gated dimensions never fired. Big PRs are now tiered/gated on their real content.
+- **Context-bundle cap** (`lib/gather.mjs` `capBundle`): the raw context bundle carried by value into the Workflow args (and re-carried in the report payload) is now clamped to generous ceilings — PR body 20 000 chars, 300 commits, 200 existing comments (each body 8 000 chars). Only pathological PRs are affected, no source is ever dropped entirely, and every truncation is recorded in `bundle.notes` (never silent).
+- **Completeness-critic hallucination guard** (`selectGaps` in `lib/review-orchestration.mjs` + `lib/review-workflow.mjs`): a re-dispatch gap whose `dispatch.agent` is not a real bundled reviewer (e.g. the critic inventing `intent-verifier` ~ the real `intent-analyzer`) is now dropped before dispatch, against a whitelist of the real reviewer set (`plan.dimensionAgentsAll`) — so a re-dispatch never fails with "agent type not found". The `completeness-critic` agent prompt is also constrained to the exact bundled reviewer names.
+- **Workflow arg-parse guard** (`lib/review-workflow.mjs`): a malformed `args` string (tool-call transcription drift over a large payload) now re-throws with an actionable message ("re-emit the Workflow call…") instead of a bare `SyntaxError` at module top-level — a 0-agent death that read as "corruption" instead of "retry".
+
 ## v0.21.2
 
 **Calmer, professional reviewer voice — Socratic framing dropped.**

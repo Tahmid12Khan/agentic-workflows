@@ -328,6 +328,22 @@ test('selectGaps keeps only dispatchable gaps and caps the count (6 exhaustive /
   assert.deepEqual(selectGaps(undefined, 2), []);
 });
 
+test('selectGaps drops gaps naming a non-bundled agent when a whitelist is supplied', () => {
+  // The completeness-critic LLM can hallucinate a plausible-but-nonexistent agent (e.g.
+  // "intent-verifier" ~ the real "intent-analyzer"); re-dispatching it throws "agent type not
+  // found". The whitelist (the real *-reviewer set) filters invented names out BEFORE dispatch.
+  const valid = ['vuln-reviewer', 'test-adequacy-reviewer', 'correctness-reviewer'];
+  const gaps = [
+    { kind: 'uncovered-criterion', dispatch: { agent: 'intent-verifier' } },    // invented → dropped
+    { kind: 'missing-dimension', dispatch: { agent: 'vuln-reviewer' } },        // real → kept
+    { kind: 'missing-test', dispatch: { agent: 'test-adequacy-reviewer' } },    // real → kept
+  ];
+  const kept = selectGaps(gaps, 6, valid);
+  assert.deepEqual(kept.map((g) => g.dispatch.agent), ['vuln-reviewer', 'test-adequacy-reviewer']);
+  assert.equal(selectGaps(gaps, 6).length, 3);   // no whitelist arg → back-compat, no name check
+  assert.equal(selectGaps(gaps, 6, null).length, 3); // explicit null → treated as "no whitelist"
+});
+
 // --- S6.2/S6.3/S6.4: per-reviewer packet addenda ---
 test('CONSEQUENCE_DIRECTIVE names the caller list + demands a needs-human question when unsure', () => {
   assert.match(CONSEQUENCE_DIRECTIVE, /caller list/i);

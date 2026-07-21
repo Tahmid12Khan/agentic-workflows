@@ -1,11 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { shouldShard, shardFiles, singleShard } from '../lib/shard.mjs';
+import { shouldShard, shardFiles, singleShard, cappedMaxShards } from '../lib/shard.mjs';
 import { verifyPolicy, selectForVerification, resolveVerification, partition, lensFor, firstPassModel, shouldEscalate, groupForVerification } from '../lib/verify.mjs';
 import { applyLearnings, dedupAgainstPrevious, recordRun, findingKey, EMPTY, resolveIncrementalRange, buildLastReview } from '../lib/memory.mjs';
 import { renderHtml } from '../lib/render.mjs';
 import { parseNpmAudit, parsePipAudit } from '../lib/scan.mjs';
-import { extractIssueKeys } from '../lib/gather.mjs';
+import { extractIssueKeys, capBundle } from '../lib/gather.mjs';
 import { buildCommentBody, buildCommentArgs, commentLocation, dedupComments } from '../lib/comments.mjs';
 import { extraScrutinyTargets, forcedChecks, newLedger, canSpawn, recordSpawn } from '../lib/route.mjs';
 import { computeSignals } from '../lib/signals.mjs';
@@ -25,6 +25,17 @@ test('shardFiles groups by top dir and caps shard count', () => {
 });
 test('singleShard wraps everything in one unit', () => {
   assert.deepEqual(singleShard(['x']), [{ label: 'all', files: ['x'] }]);
+});
+test('cappedMaxShards bounds the fan-out (shardedAgents × shards) under maxAspects', () => {
+  // few dims → the config max (4) is not reduced: 5 agents × 4 = 20 ≤ 40
+  assert.equal(cappedMaxShards(4, 5, 40), 4);
+  // many dims → shards reduced so agents × shards fits: 12 agents, ceiling 40 → floor(40/12)=3
+  assert.equal(cappedMaxShards(4, 12, 40), 3);
+  // very many dims → floored at 1, never 0
+  assert.equal(cappedMaxShards(4, 100, 40), 1);
+  assert.equal(cappedMaxShards(4, 1, 40), 4);       // one agent → config max
+  assert.equal(cappedMaxShards(4, 5, 0), 4);        // maxAspects<=0 → no ceiling
+  assert.equal(cappedMaxShards(4, 0, 40), 4);       // guard: 0 agents treated as 1
 });
 
 // --- bounded adversarial verification ---
@@ -266,6 +277,30 @@ test('parsePipAudit maps vulns to findings', () => {
 // --- tracker key extraction ---
 test('extractIssueKeys pulls Jira-style keys', () => {
   assert.deepEqual(extractIssueKeys('Fixes PROJ-123 and PROJ-9', '[A-Z][A-Z0-9]+-[0-9]+'), ['PROJ-123', 'PROJ-9']);
+});
+test('capBundle clamps oversized body/commits/comments and records the drops', () => {
+  const limits = { body: 10, commentBody: 5, comments: 2, commits: 2 };
+  const bundle = {
+    pr: { title: 't', body: 'x'.repeat(50) },
+    commits: [1, 2, 3, 4].map((n) => ({ sha: `s${n}`, subject: `c${n}` })),
+    existingComments: [1, 2, 3].map((n) => ({ body: 'y'.repeat(20), author: `u${n}` })),
+    notes: [],
+  };
+  capBundle(bundle, limits);
+  assert.match(bundle.pr.body, /^x{10}… \[\+40 chars\]$/);   // body clipped, drop annotated
+  assert.equal(bundle.commits.length, 2);                     // commit list capped
+  assert.equal(bundle.existingComments.length, 2);            // comment list capped
+  assert.ok(bundle.existingComments.every((c) => c.body.startsWith('yyyyy…'))); // each body clipped
+  assert.ok(bundle.notes.some((n) => /commit list capped to 2 \(\+2 omitted\)/.test(n)));
+  assert.ok(bundle.notes.some((n) => /existing-comment list capped to 2 \(\+1 omitted\)/.test(n)));
+});
+test('capBundle leaves a small bundle untouched and tolerates missing fields', () => {
+  const small = { pr: { title: 't', body: 'short' }, commits: [{ sha: 's1' }], existingComments: [], notes: [] };
+  const before = JSON.stringify(small);
+  capBundle(small);
+  assert.equal(JSON.stringify(small), before);               // no change under the ceilings
+  assert.deepEqual(capBundle({}).notes, []);                 // no pr/commits/comments → no throw
+  assert.equal(capBundle(null), null);                       // non-object → passthrough
 });
 
 // --- inline comments ---

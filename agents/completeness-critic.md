@@ -28,7 +28,7 @@ Output ONLY this JSON — a BOUNDED list (max 6), highest value first, each with
       "kind": "missing-dimension|uncovered-criterion|unreviewed-risk-path|untraced-taint|unverified-claim|missing-test",
       "what": "1 sentence",
       "where": "file, file:line, or dimension id",
-      "dispatch": { "agent": "<bundled agent to re-run, e.g. vuln-reviewer / taint-verifier / test-adequacy-reviewer>", "files": ["..."], "focus": "what to look for" }
+      "dispatch": { "agent": "<one EXISTING bundled dimension reviewer to re-run — MUST be an exact name from this set: correctness-reviewer, vuln-reviewer, error-handling-reviewer, test-adequacy-reviewer, data-store-reviewer, concurrency-reviewer, perf-scalability-reviewer, api-compat-reviewer, type-design-reviewer, docs-comment-reviewer, observability-reviewer, dependency-reviewer, simplification-reviewer, a11y-i18n-reviewer. Never invent a name (no 'intent-verifier', no '*-verifier'); an untraced-taint gap dispatches vuln-reviewer.>", "files": ["..."], "focus": "what to look for" }
     }
   ],
   "assessment": "1-2 sentences: is coverage adequate, or what is the biggest remaining blind spot?"
