@@ -3,6 +3,18 @@
 Release log for the **adversarial-code-review** plugin. Newest first. The forward-looking
 plan lives in [ROADMAP.md](ROADMAP.md). Source-of-truth version: `.claude-plugin/plugin.json`.
 
+## v0.24.0
+
+**Reviewer labels now read as name + code, not the bare internal `Dn` index.**
+
+The dimension `Dn` codes are an internal index; on their own (`review:D6+D8:all`, a finding tagged `D6`) they told the reader nothing. Every reviewer surface now carries **both** the code and the reviewer's name.
+
+- **Workflow agent label** (`lib/review-workflow.mjs`): `review:D6+D8:all` → `review:D6+D8:data-store-reviewer:all` — the dim codes plus the reviewer that owns them (one agent per aspect).
+- **Report finding tags** (`lib/render.mjs`, HTML + markdown): a finding tagged `D6` now reads `D6 data-store-reviewer`. In HTML the tag carries a hover tooltip with the human dimension name (`data & DB`), shown with a dotted underline.
+- **Agents & coverage table**: each row already names the reviewer; its `covers`/`reason` list the dimensions as `D6 data & DB` (code + name).
+
+Display-only — no change to review depth, dispatch, or the finding contract. The label is cosmetic (the workflow uses the harness concurrency cap, not the `route.mjs` ledger), so nothing routes on its format.
+
 ## v0.23.0
 
 **Any-size reviews: a file-count ceiling that bounds the Workflow payload + a smaller args blob.**
