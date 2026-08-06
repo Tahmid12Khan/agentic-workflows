@@ -530,7 +530,7 @@ test('exhaustivePlan.doubleRun follows the exhaustive flag (S7.1)', () => {
 
 // --- S6.1: high-tier completeness screen (cheap, mutually exclusive with the exhaustive critic) ---
 test('exhaustivePlan.completenessScreen: every workflow tier (low/standard/high), never alongside the exhaustive critic', () => {
-  assert.equal(exhaustivePlan('low', {}).completenessScreen, true);          // low → cheap x1 haiku screen
+  assert.equal(exhaustivePlan('low', {}).completenessScreen, true);          // low → cheap x1 sonnet screen
   assert.equal(exhaustivePlan('standard', {}).completenessScreen, true);     // standard → screen (was off before)
   assert.equal(exhaustivePlan('high', {}).completenessScreen, true);         // high → screen
   assert.equal(exhaustivePlan('high', {}).completenessCritic, false);        // the full opus critic does NOT run at high
@@ -543,7 +543,7 @@ test('exhaustivePlan.completenessScreen: every workflow tier (low/standard/high)
 });
 
 test('exhaustivePlan.screenGapCap: screen re-dispatch budget follows the tier (low 0 / standard 1 / high 2)', () => {
-  assert.equal(exhaustivePlan('low', {}).screenGapCap, 0);       // low: haiku screen only, no re-dispatch
+  assert.equal(exhaustivePlan('low', {}).screenGapCap, 0);       // low: sonnet screen only, no re-dispatch
   assert.equal(exhaustivePlan('standard', {}).screenGapCap, 1);  // standard: ≤1 gap reviewer
   assert.equal(exhaustivePlan('high', {}).screenGapCap, 2);      // high: ≤2 gap reviewers
 });

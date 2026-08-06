@@ -26,7 +26,7 @@
       "properties": {
         "by_tier": {
           "type": "object",
-          "description": "Base reviewer model per tier (default: haiku for trivial, sonnet otherwise). Keys: trivial/low/standard/high/critical → a model name.",
+          "description": "Base reviewer model per tier (default: sonnet for every tier). Keys: trivial/low/standard/high/critical → a model name.",
           "properties": {
             "trivial": { "type": "string" },
             "low": { "type": "string" },
@@ -135,9 +135,9 @@
     },
     "completeness": {
       "type": "object",
-      "description": "High-tier completeness SCREEN (S6.1): a cheap haiku false-negative screen that flags dimension/criterion COVERAGE gaps (it sees no diff, so not taint). Runs on the high tier only, and only when the full exhaustive critic is not already running.",
+      "description": "High-tier completeness SCREEN (S6.1): a cheap sonnet false-negative screen that flags dimension/criterion COVERAGE gaps (it sees no diff, so not taint). Runs on the high tier only, and only when the full exhaustive critic is not already running.",
       "properties": {
-        "screen_on_high": { "type": "boolean", "description": "Run the high-tier completeness screen (default true). Set false to skip the extra haiku pass." }
+        "screen_on_high": { "type": "boolean", "description": "Run the high-tier completeness screen (default true). Set false to skip the extra sonnet pass." }
       },
       "additionalProperties": false
     },

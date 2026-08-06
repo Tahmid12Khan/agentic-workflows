@@ -445,7 +445,7 @@ test('inlined S6 helpers stay in sync with lib/review-orchestration.mjs', () => 
   assert.match(src, /function historyBlock\(/, 'historyBlock must be inlined');
   assert.match(src, /function testSignalBlock\(/, 'testSignalBlock must be inlined');
   assert.match(src, /function reviewerAddendum\(/, 'reviewerAddendum must be inlined');
-  // the high-tier screen gates on the discovery flag and reuses completeness-critic on haiku
+  // the high-tier screen gates on the discovery flag and reuses completeness-critic on sonnet
   assert.match(src, /plan\.discovery\?\.completenessScreen/, 'the screen must gate on completenessScreen');
   assert.match(src, /label: 'completeness-screen'/, 'the screen dispatch must be labelled');
   assert.match(src, /reviewerAddendum\(a\.agent, \{ history, testSignal \}\)/, 'reviewers must get the S6 addendum');

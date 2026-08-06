@@ -1,7 +1,7 @@
 ---
 name: triage-classifier
 description: Confirms or adjusts the computed review tier for a change using judgment about blast radius. Returns a structured review plan. Use as the first reasoning step in the code-review workflow.
-model: haiku
+model: sonnet
 tools: Read, Grep, Glob
 ---
 

@@ -1,7 +1,7 @@
 ---
 name: docs-comment-reviewer
 description: Docs & comment-accuracy reviewer (comment rot, stale README/ADR, missing public-API docs). Advisory only.
-model: haiku
+model: sonnet
 tools: Read, Grep, Glob
 ---
 

@@ -85,7 +85,7 @@ test('S5.1: model = f(dimension, tier) — no opus below high, opus dims escalat
   assert.equal(high.D7, 'opus');
   assert.equal(high.D9, 'opus');
   assert.equal(high.D2, 'sonnet');
-  assert.equal(pickModels(['D3'], 'trivial', {}).D3, 'haiku'); // tier base model at trivial
+  assert.equal(pickModels(['D3'], 'trivial', {}).D3, 'sonnet'); // tier base model at trivial
 });
 
 test('S5.1: a risk_map floor raising the tier is what earns opus on standard-tier code', () => {
@@ -114,8 +114,8 @@ test('S5.1: config.models overrides the matrix (opus_dims, opus_min_tier, by_tie
   assert.equal(redef.D4, 'opus');
   assert.equal(redef.D3, 'sonnet');
   // override the per-tier base model
-  const base = pickModels(['D2'], 'standard', {}, { models: { by_tier: { standard: 'haiku' } } });
-  assert.equal(base.D2, 'haiku');
+  const base = pickModels(['D2'], 'standard', {}, { models: { by_tier: { standard: 'opus' } } });
+  assert.equal(base.D2, 'opus');
 });
 
 test('risk_map config can force a tier floor', () => {

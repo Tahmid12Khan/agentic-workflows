@@ -3,6 +3,17 @@
 Release log for the **adversarial-code-review** plugin. Newest first. The forward-looking
 plan lives in [ROADMAP.md](ROADMAP.md). Source-of-truth version: `.claude-plugin/plugin.json`.
 
+## v0.25.0
+
+**Cheap-tier pipeline agents (`triage-classifier`, the completeness screen) now run on `sonnet` instead of `haiku`.**
+
+The `haiku` default for the tier-sanity-check pass and the every-tier completeness screen underperformed on judgment calls (blast-radius sanity-checking, coverage-gap detection) relative to its token savings. Both now default to `sonnet`:
+
+- **Agent frontmatter** (`agents/triage-classifier.md`, `agents/docs-comment-reviewer.md`): `model: haiku` → `model: sonnet`.
+- **`lib/triage.mjs`** `tierModel()`: the per-tier base model is now `sonnet` at every tier (was `haiku` at trivial).
+- **`lib/review-workflow.mjs`**: both inline `agent()` calls that previously pinned `model: 'haiku'` (triage-classifier, completeness-screen) now pin `'sonnet'`.
+- **Report/coverage table** (`lib/render.mjs`) and docs (`README.md`, `docs/ARCHITECTURE.md`) updated to reflect the new default; `config.schema.json` descriptions no longer claim a haiku default.
+
 ## v0.24.0
 
 **Reviewer labels now read as name + code, not the bare internal `Dn` index.**

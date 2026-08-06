@@ -29,7 +29,7 @@ In scope: `agents/*-reviewer.md` (the dimension reviewers). Cross-check the dime
 
 - `correctness-reviewer` is a deliberate prose outlier: `Check:` instead of `Focus —`, inline `Rules:` instead of a `SHARED RULES` header, and it enumerates its allowed dimensions (`D1|D2|D12|D3|D5`). Its finding keys + severity vocab still conform — that's what matters.
 - Minor evidence-wording differences (`cite the line/symbol` vs `cite file:line/symbol`) and `SHARED RULES` colon/casing are cosmetic.
-- Model tiering is intentionally non-uniform (opus on `vuln`/`concurrency`/`perf-scalability`, haiku on `docs-comment`); don't flag a model choice unless it disagrees with `OPUS_DIMS` in `triage.mjs`.
+- Model tiering is intentionally non-uniform (opus on `vuln`/`concurrency`/`perf-scalability`); don't flag a model choice unless it disagrees with `OPUS_DIMS` in `triage.mjs`.
 
 ## What to actually fail on
 
