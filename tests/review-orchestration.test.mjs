@@ -161,8 +161,27 @@ test('review-workflow.mjs declares a valid meta with 4 phases', () => {
   assert.match(src, /: `\$\{diffRead\} \(ignore lockfile\/build-artifact\/vendored churn/, 'intent must fall back to diffRead with the lockfile-churn caveat when allParts is empty');
   assert.match(src, /`\$\{intentDiffRead\}\\n\\nIn ORDER:/, 'intent-analyzer prompt must use intentDiffRead');
   // intent's read budget is capped once it has full bundle coverage (no maxTurns option exists on
-  // the Workflow harness's agent() call — the cap must be a prompt-text instruction).
-  assert.match(src, /cap any FURTHER Read\/Grep\/Bash calls at 3/, 'intent must cap further lookups once it has full bundle coverage');
+  // the Workflow harness's agent() call — the cap must be a prompt-text instruction). Fix 10: bumped
+  // 3 → 4 to match the dimension reviewers' "4 additional lookups" convention and to leave room for
+  // the PRIOR BUG HISTORY read (historyPrior) that may ride the same prompt without its own budget line.
+  assert.match(src, /cap any FURTHER Read\/Grep\/Bash calls at 4/, 'intent must cap further lookups at 4 (leaves room for a prior-history read)');
+  // Fix 1/11: the three bundle-read consumers (D3, sharded scopeFor, intent) share ONE helper
+  // instead of three near-identical literals, and that helper tells the agent to check for a
+  // truncation notice and page through with Read(offset=...) rather than trust the "complete
+  // coverage" claim at face value — real bundle parts can still trip the Read tool's per-call limit.
+  assert.match(src, /const bundleReadInstruction = \(parts, trailing\)/, 'the bundle-read instruction must be factored into one shared helper');
+  assert.match(src, /truncation notice/, 'the bundle-read instruction must warn about truncation');
+  assert.match(src, /Read\(offset=\.\.\.\)/, 'the bundle-read instruction must tell the agent to page through with Read(offset=...)');
+  // Fix 9: the parts branch (Task 1) must self-report a file count like the manifest branch already
+  // does (`${a.count ?? 0} file(s)`), so a reviewer can self-check it covered everything.
+  assert.match(src, /Review ONLY the files covered by those parts, for dimension\(s\) \$\{dimList\}: \$\{a\.count \?\? 0\} file\(s\)\./, 'the parts branch must report a.count like the manifest branch does');
+  // Fix 3: the triage-added dimension aspect must also get bundle parts (allParts), matching every
+  // other whole-change consumer (D3, intent) — previously it only carried `manifest`, which fell
+  // back to one Read per file instead of the bundle-parts treatment.
+  assert.match(src, /shardId: 'triage', files: \[\], manifest: allManifest, count: plan\.fileCount \?\? 0, parts: allParts/, 'the triage-extra aspect must carry allParts too');
+  // Fix 2: intentP must degrade like every other Intent-phase dispatch (see triageP above) instead
+  // of propagating uncaught through Promise.all([triageP, intentP]) on a very large PR.
+  assert.match(src, /\.catch\(\(e\) => \{ notes\.push\(`intent-analyzer failed: \$\{e\.message\}`\); return null; \}\);/, 'intentP must catch and degrade to a note + null, like triageP');
   // COST LEVER (sonnet-first verify): first-pass refuter groups run on modelFirst (sonnet), opus only for a critical group + the reverify guard.
   assert.match(src, /const firstModel = plan\.verify\?\.modelFirst/, 'batched verify must be sonnet-first via modelFirst');
   assert.match(src, /function intentBrief\(/, 'intentBrief must be inlined (canonical: lib/review-orchestration.mjs)');

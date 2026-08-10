@@ -245,6 +245,27 @@ test('bundleParts: a single oversized file becomes its own oversized part, never
   assert.match(parts[1], /=== FILE: small\.js ===/);
 });
 
+test('bundleParts: defaults are sized to actually fit under the real Read-tool limit', () => {
+  // Verified empirically (this session): Read truncates around ~25,000 tokens per call — a
+  // 134,420-byte/1,061-line file came back as only 100 lines with a "cap 25000" notice. The old
+  // defaults (1,800 lines / 200KB) were 2-3x over that on real diff content; 800 lines / 60KB
+  // leaves margin. Assert the actual default VALUES (not an explicit override) by choosing inputs
+  // that fit under the OLD default but must split under the NEW one.
+  const fiveHundredLines = (n) => Array.from({ length: 500 }, (_, i) => `+line${i}${n}`).join('\n') + '\n';
+  const byFile = { 'a.js': fiveHundredLines('a'), 'b.js': fiveHundredLines('b') };
+  // two 500-line files (~1,002 lines with headers) fit in ONE part under the old 1,800-line default,
+  // but must SPLIT under the corrected ~800-line default.
+  const parts = bundleParts(['a.js', 'b.js'], byFile);
+  assert.equal(parts.length, 2);
+
+  const sixtyKb = 'x'.repeat(45_000);
+  const byBytes = { 'a.js': sixtyKb + '\n', 'b.js': sixtyKb + '\n' };
+  // two ~45KB files (~90KB total) fit in ONE part under the old 200KB default, but must SPLIT under
+  // the corrected ~60KB default.
+  const byteParts = bundleParts(['a.js', 'b.js'], byBytes);
+  assert.equal(byteParts.length, 2);
+});
+
 test('contextPackNote: an EMPTY pack degrades to a note, an absent one is silent', () => {
   // context-pack.mjs wrote a zero-byte file → build-args reads null → without a note the report
   // would look identical to a healthy run that simply had no pack (golden rule 3).
@@ -295,6 +316,42 @@ test('CLI: writes per-shard manifests and keeps every reviewed path OUT of args'
     for (const f of files) assert.equal(blob.includes(f), false, `${f} must not be inlined into args`);
     assert.equal(a.plan.files, undefined);    // stripped from the embedded plan too
     assert.equal(a.plan.shards, undefined);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('CLI: a bundle-write failure leaves manifests intact, only nulls parts/allParts', () => {
+  // Fix 5: manifests and bundles are now separate try/catch blocks so a bundle-only failure (bundles
+  // write ~3x the bytes manifests do, so they are the more likely failure point) does not discard
+  // manifests that already wrote fine. Simulate a bundle-write failure WITHOUT mocking fs: pre-create
+  // a regular FILE at the exact path build-args.mjs will mkdirSync('bundles') into, so that call
+  // throws EEXIST — a genuine fs failure, not a stub.
+  const dir = mkdtempSync(join(tmpdir(), 'build-args-bundlefail-'));
+  try {
+    const files = ['src/a.js', 'src/b.js'];
+    writeFileSync(join(dir, 'plan.json'), JSON.stringify({
+      tier: 'standard', fileCount: 2, files,
+      shards: [{ label: 'src', files }],
+    }));
+    writeFileSync(join(dir, 'diff.txt'), files.map((f) =>
+      `diff --git a/${f} b/${f}\n--- a/${f}\n+++ b/${f}\n@@ -1 +1,2 @@\n-a\n+b\n+c\n`).join(''));
+    writeFileSync(join(dir, 'bundles'), 'not a directory');   // occupies the path build-args needs as a dir
+    const r = spawnSync(process.execPath, [SCRIPT, '--dir', dir], { encoding: 'utf8' });
+    assert.equal(r.status, 0, r.stderr);
+    const a = JSON.parse(r.stdout);
+
+    // manifests wrote fine — shardsOut/allManifest are non-null, exactly as the healthy-run test above
+    assert.equal(a.allManifest, join(dir, 'manifests', 'all.files'));
+    assert.equal(a.shards.length, 1);
+    assert.equal(a.shards[0].manifest, join(dir, 'manifests', '0-src.files'));
+    assert.equal(a.shards[0].count, 2);
+
+    // bundles did NOT write — parts/allParts are null, not partially populated
+    assert.equal(a.shards[0].parts, null);
+    assert.equal(a.allParts, null);
+
+    // the degrade is reported, and the note is bundle-specific (not misattributed to manifests)
+    assert.equal(a.buildNotes.length, 1);
+    assert.match(a.buildNotes[0], /bundle parts not written/);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
