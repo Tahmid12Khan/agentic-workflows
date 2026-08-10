@@ -8,7 +8,25 @@ test('expandAspects = agents × shards, dims carried as a list', () => {
     [{ label: 'A', files: ['a.ts'] }, { label: 'B', files: ['b.ts'] }],
   );
   assert.equal(aspects.length, 4);
-  assert.deepEqual(aspects[0], { dims: ['D2'], agent: 'correctness-reviewer', shardId: 'A', files: ['a.ts'] });
+  // A shard with no `manifest` keeps the legacy inline shape; count is derived from the file list.
+  assert.deepEqual(aspects[0], { dims: ['D2'], agent: 'correctness-reviewer', shardId: 'A', files: ['a.ts'], manifest: null, count: 1 });
+});
+
+test('expandAspects carries a shard manifest by reference instead of the file list', () => {
+  // The by-reference shape build-args.mjs emits: no per-file paths in args, just a path + a count.
+  const aspects = expandAspects(
+    { D2: 'correctness-reviewer', D3: 'vuln-reviewer' },
+    [{ label: 'A', count: 12, manifest: '/s/manifests/0-A.files' }, { label: 'B', count: 3, manifest: '/s/manifests/1-B.files' }],
+    { unsharded: ['D3'], allManifest: '/s/manifests/all.files' },
+  );
+  const a = aspects.find((x) => x.shardId === 'A');
+  assert.equal(a.manifest, '/s/manifests/0-A.files');
+  assert.equal(a.count, 12);
+  assert.deepEqual(a.files, []);   // nothing inlined
+  // the unsharded (D3) aspect gets the all-files manifest and the summed count
+  const d3 = aspects.find((x) => x.dims.includes('D3'));
+  assert.equal(d3.manifest, '/s/manifests/all.files');
+  assert.equal(d3.count, 15);
 });
 
 test('expandAspects folds dims sharing an agent into ONE aspect (no duplicate agent per dim)', () => {
@@ -31,7 +49,7 @@ test('expandAspects collapses unsharded dims to one all-files aspect', () => {
   assert.equal(aspects.length, 3);
   const d3 = aspects.filter((a) => a.dims.includes('D3'));
   assert.equal(d3.length, 1);
-  assert.deepEqual(d3[0], { dims: ['D3'], agent: 'vuln-reviewer', shardId: 'all', files: ['a.ts', 'b.ts'] });
+  assert.deepEqual(d3[0], { dims: ['D3'], agent: 'vuln-reviewer', shardId: 'all', files: ['a.ts', 'b.ts'], manifest: null, count: 2 });
   assert.equal(aspects.filter((a) => a.dims.includes('D2')).length, 2);
 });
 
@@ -147,10 +165,19 @@ test('args-by-reference: the workflow keeps the diff out of args + its own body'
   const ba = readFileSync(new URL('../lib/build-args.mjs', import.meta.url), 'utf8');
   // build-args emits the diff PATH + a precomputed diffIndex, never the diff text.
   assert.match(ba, /diffPath,/, 'build-args must emit diffPath');
-  assert.match(ba, /diffIndex = buildDiffIndex\(diffText\)/, 'build-args must precompute the diffIndex from diff.txt (then restrict it to the reviewed files when capped)');
+  assert.match(ba, /fullIndex = buildDiffIndex\(diffText\)/, 'build-args must precompute the changed-line index from diff.txt');
+  assert.match(ba, /diffRanges = rangesBySliceName\(fullIndex, reviewFiles\)/, 'build-args must key the ranges by slice name so args carries the file list once, not three times');
+  assert.doesNotMatch(ba, /sliceIndex\[/, 'the path\u2192slice-path map is retired \u2014 args carries sliceDir and the name is derived');
   assert.doesNotMatch(ba, /\bdiff,\n/, 'build-args must not carry the diff TEXT in args');
   // the sandbox consumes the passed diffIndex for off-diff demotion (it can no longer build one).
-  assert.match(wf, /partitionByScope\(synth\.findings \?\? \[\], diffIndex/, 'the workflow must demote using the passed-in diffIndex');
+  assert.match(wf, /partitionByScope\(synth\.findings \?\? \[\], scopeIndex/, 'the workflow must demote using the index it rebuilt from diffRanges');
+  assert.match(wf, /const scopeIndex = diffIndex \?\?/, 'the sandbox must rebuild the path-keyed index from diffRanges, falling back to a passed diffIndex');
+  assert.match(wf, /sliceName\)\.filter\(\(n\) => reviewedSlices\.has\(n\)\)/, 'the reviewed set must be recognized by slice name (diffRanges keys), not a carried path list');
+  assert.match(wf, /\$\{sliceDir\}\/\$\{n\}/, 'slice paths must be DERIVED from sliceDir + sliceName, not read from a map');
+  // FILE LIST BY REFERENCE: args carries per-shard manifest PATHS, so neither side inlines a path per file.
+  assert.match(ba, /writeFileSync\(path, manifestText\(s\.files \?\? \[\], sliceDir\)\)/, 'build-args must write one manifest per shard');
+  assert.match(wf, /const scopeFor = \(a, dimList\) =>/, 'the sandbox must resolve a reviewer scope from either a manifest or an inline list');
+  assert.doesNotMatch(wf, /plan\.files = /, 'the sandbox must NOT rebuild plan.files — nothing needs it, and it would ride back out in the payload');
   assert.doesNotMatch(wf, /function buildDiffIndex\(/, 'buildDiffIndex must live in build-args (via trim-diff), not the sandbox');
   // normPath is still needed inline (inDiffScope keys on it) — now a function declaration mirroring
   // trim-diff.mjs's unquote-then-strip-prefix form, not the old bare arrow; sectionPath went with filterDiff.
@@ -351,14 +378,14 @@ test('CONSEQUENCE_DIRECTIVE names the caller list + demands a needs-human questi
   assert.match(CONSEQUENCE_DIRECTIVE, /uncertain:true/);
 });
 
-test('historyBlock renders only files with fix history, else empty', () => {
-  assert.equal(historyBlock({}), '');
+test('historyBlock renders a Read instruction for a path, else empty for a null/absent path', () => {
   assert.equal(historyBlock(null), '');
-  assert.equal(historyBlock({ 'a.js': [] }), '');               // no subjects → nothing
-  const b = historyBlock({ 'src/pay.js': ['fix: rounding', 'revert bad cap'], 'x.js': [] });
+  assert.equal(historyBlock(undefined), '');
+  assert.equal(historyBlock(''), '');
+  const b = historyBlock('/scratch/history.json');
   assert.match(b, /PRIOR BUG HISTORY/);
-  assert.match(b, /src\/pay\.js: fix: rounding \| revert bad cap/);
-  assert.doesNotMatch(b, /x\.js/);                              // history-less file omitted
+  assert.match(b, /Read \/scratch\/history\.json/);             // args-by-reference: a Read instruction, not the data
+  assert.match(b, /history.*<file>.*notes/);                    // documents the { history: {file: [subjects]}, notes: [] } shape
 });
 
 test('testSignalBlock reflects pass/fail with failing names, empty when not run', () => {
@@ -371,17 +398,17 @@ test('testSignalBlock reflects pass/fail with failing names, empty when not run'
 });
 
 test('reviewerAddendum routes each extra to the right reviewer, others get nothing', () => {
-  const history = { 'src/a.js': ['fix: bug'] };
+  const historyPath = '/scratch/history.json';
   const testSignal = { ran: true, passed: false, failing: ['t1'] };
-  const corr = reviewerAddendum('correctness-reviewer', { history, testSignal });
+  const corr = reviewerAddendum('correctness-reviewer', { historyPath, testSignal });
   assert.match(corr, /CROSS-FILE CONSEQUENCE/);       // S6.2
   assert.match(corr, /PRIOR BUG HISTORY/);            // S6.3
   assert.doesNotMatch(corr, /EXECUTED TEST SIGNAL/);  // D5-only, not correctness
-  const d5 = reviewerAddendum('test-adequacy-reviewer', { history, testSignal });
+  const d5 = reviewerAddendum('test-adequacy-reviewer', { historyPath, testSignal });
   assert.match(d5, /EXECUTED TEST SIGNAL/);           // S6.4
   assert.doesNotMatch(d5, /CROSS-FILE CONSEQUENCE/);
   assert.doesNotMatch(d5, /PRIOR BUG HISTORY/);       // history rides correctness, not D5
-  assert.equal(reviewerAddendum('vuln-reviewer', { history, testSignal }), ''); // everyone else: nothing
+  assert.equal(reviewerAddendum('vuln-reviewer', { historyPath, testSignal }), ''); // everyone else: nothing
   assert.equal(reviewerAddendum('correctness-reviewer', {}), '\n' + CONSEQUENCE_DIRECTIVE); // directive always, history only when present
 });
 
@@ -448,8 +475,9 @@ test('inlined S6 helpers stay in sync with lib/review-orchestration.mjs', () => 
   // the high-tier screen gates on the discovery flag and reuses completeness-critic on sonnet
   assert.match(src, /plan\.discovery\?\.completenessScreen/, 'the screen must gate on completenessScreen');
   assert.match(src, /label: 'completeness-screen'/, 'the screen dispatch must be labelled');
-  assert.match(src, /reviewerAddendum\(a\.agent, \{ history, testSignal \}\)/, 'reviewers must get the S6 addendum');
-  assert.match(src, /const \{ plan, bundle, diffPath, contextPackPath, diffIndex, history, testSignal,/, 'history + testSignal must be destructured from args');
+  assert.match(src, /reviewerAddendum\(a\.agent, \{ historyPath, testSignal \}\)/, 'reviewers must get the S6 addendum');
+  assert.match(src, /const \{ plan, bundle, diffPath, contextPackPath, diffIndex, historyPath, testSignal,/, 'historyPath + testSignal must be destructured from args');
+  assert.match(src, /checkout, diffRanges, sliceDir,/, 'diffRanges + sliceDir must be destructured from args');
 });
 
 // --- comprehensive textual sync guard ---
@@ -491,6 +519,7 @@ const normWs = (s) => s.replace(/\s+/g, ' ').trim();
 // list: there is no inlined copy to sync against.
 const SYNCED_FUNCTIONS = [
   ['normPath', '../lib/trim-diff.mjs'],
+  ['sliceName', '../lib/trim-diff.mjs'],
   ['unquoteGitPath', '../lib/trim-diff.mjs'],
   ['isOnRiskPath', '../lib/verify.mjs'],
   ['distributeSeats', '../lib/verify.mjs'],

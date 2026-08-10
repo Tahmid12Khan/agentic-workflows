@@ -51,11 +51,17 @@ test('enclosingDefinition: Python def is bounded by indentation and folds in dec
   assert.deepEqual(enclosingDefinition(lines, 5, 5), [3, 6]); // decorator..last body line, no trailing blank/next def
 });
 
-test('enclosingDefinition: a top-level change with no enclosing def returns null (→ whole-file fallback)', () => {
+test('enclosingDefinition: a top-level change with no enclosing def returns null (→ windowed fallback)', () => {
   assert.equal(enclosingDefinition(['const A = 1;', 'const B = 2;'], 1, 1), null);
 });
 
-// --- fileBody: def spans vs whole-file fallback ---
+test('enclosingDefinition: a start line beyond the end of the file is clamped, never thrown', () => {
+  // a hunk's new-side line number can exceed the file length when the diff and the working-tree
+  // file have drifted since capture; no def is found after clamping, so this is null, not a throw.
+  assert.equal(enclosingDefinition(['const A = 1;', 'const B = 2;'], 999, 999), null);
+});
+
+// --- fileBody: def spans vs per-hunk window vs whole-file (only when there's nothing to localize) ---
 test('fileBody: emits the enclosing definition, line-numbered, when a boundary is found', () => {
   const content = 'export function foo() {\n  const x = 1;\n  return x;\n}\n\nexport function bar() {\n  return 2;\n}\n';
   const { bodyText, fallback } = fileBody(content, [[3, 3]]);
@@ -65,19 +71,19 @@ test('fileBody: emits the enclosing definition, line-numbered, when a boundary i
   assert.doesNotMatch(bodyText, /function bar/); // sibling def excluded
 });
 
-test('fileBody: falls back to the whole file when no definition boundary is found', () => {
-  const { bodyText, fallback } = fileBody('const A = 1;\nconst B = 2;', [[1, 1]]);
+test('fileBody: a hunk with no enclosing definition contributes a window around itself, not the whole file', () => {
+  const content = Array.from({ length: 50 }, (_, i) => `const v${i} = ${i};`).join('\n'); // no braces/defs
+  const { bodyText, fallback } = fileBody(content, [[25, 25]], { windowRadius: 2 });
+  assert.equal(fallback, false);
+  assert.match(bodyText, /25\| const v24 = 24;/);   // the changed line is always kept
+  assert.doesNotMatch(bodyText, /const v0 = 0;/);    // far-away lines excluded — no whole-file dump
+});
+
+test('fileBody: falls back to the whole file only when there are no localizable ranges at all', () => {
+  const { bodyText, fallback } = fileBody('const A = 1;\nconst B = 2;', []);
   assert.equal(fallback, true);
   assert.match(bodyText, /1\| const A = 1;/);
   assert.match(bodyText, /2\| const B = 2;/);
-});
-
-test('fileBody: an over-cap whole-file fallback is windowed around the change (changed line survives)', () => {
-  const content = Array.from({ length: 50 }, (_, i) => `const v${i} = ${i};`).join('\n'); // no braces/defs
-  const { bodyText, fallback } = fileBody(content, [[25, 25]], { perFileCap: 100, windowRadius: 2 });
-  assert.equal(fallback, true);
-  assert.match(bodyText, /25\| const v24 = 24;/);   // the changed line is always kept
-  assert.doesNotMatch(bodyText, /const v0 = 0;/);    // far-away lines dropped to fit the cap
 });
 
 // --- imports + exports ---
@@ -123,7 +129,31 @@ test('assemblePack omits tail files once the total cap is hit, with a note', () 
   const { text, notes } = assemblePack(entries, { perFileCap: 1000, totalCap: 500 });
   assert.match(text, /FILE: a\.js/);
   assert.doesNotMatch(text, /FILE: b\.js/);
-  assert.ok(notes.some((n) => /b\.js: omitted \(total pack cap 500B reached\)/.test(n)));
+  // a total-cap omission names no paths — the reviewer's own file list already covers what's
+  // missing, so the note is just a count, not "b.js: omitted ..." repeated per file.
+  assert.ok(notes.some((n) => /1 file omitted \(total pack cap 500B reached\)/.test(n)));
+});
+
+test('assemblePack collapses many same-reason total-cap omissions into one count, not one line per file', () => {
+  const big = 'X'.repeat(400);
+  const entries = Array.from({ length: 5 }, (_, i) => (
+    { path: `f${i}.js`, bodyText: big, bodyFallback: false, importsText: '', callers: [] }
+  ));
+  const { notes } = assemblePack(entries, { perFileCap: 1000, totalCap: 500 }); // only the first file fits
+  const omitted = notes.filter((n) => /omitted \(total pack cap/.test(n));
+  assert.equal(omitted.length, 1);
+  assert.equal(omitted[0], '4 files omitted (total pack cap 500B reached)');
+});
+
+test('assemblePack collapses a repeated per-file-cap reason into one "(count): paths" line', () => {
+  const entries = [
+    { path: 'a.js', bodyText: 'BODY', bodyFallback: false, importsText: 'I'.repeat(500), callers: [] },
+    { path: 'b.js', bodyText: 'BODY', bodyFallback: false, importsText: 'I'.repeat(500), callers: [] },
+  ];
+  const { notes } = assemblePack(entries, { perFileCap: 20, totalCap: 10000 });
+  const imports = notes.filter((n) => /^imports omitted \(per-file cap\)/.test(n));
+  assert.equal(imports.length, 1);
+  assert.equal(imports[0], 'imports omitted (per-file cap) (2): a.js, b.js');
 });
 
 test('caps are the plan-mandated 40KB total / 8KB per file', () => {

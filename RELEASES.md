@@ -3,6 +3,36 @@
 Release log for the **adversarial-code-review** plugin. Newest first. The forward-looking
 plan lives in [ROADMAP.md](ROADMAP.md). Source-of-truth version: `.claude-plugin/plugin.json`.
 
+## v0.26.0
+
+**Everything bulky travels by reference: `args.json` 42 KB → 11 KB on a 69-file PR. Plus reviewers get read-only `Bash`, and two silent-degrade bugs are fixed.**
+
+v0.23.0 bounded the args payload by capping the *file count*; this release removes the per-file terms instead, so the payload barely grows with PR size at all. Measured end to end on a real 69-file Java PR: **42.2 KB → 11.3 KB (−73%)**, with **zero** reviewed paths left anywhere in the blob.
+
+- **Derived slice names** (`lib/trim-diff.mjs` `sliceName` — FNV-1a base36 over the normalized path): the path→slice-path map is gone. `args` carries `sliceDir` once and both sides recompute the name; `diffRanges` is keyed by that name rather than by path. A slice-name collision (~1 in 200k at the 200-file ceiling) disables slicing for the run rather than mis-routing a reviewer. *(42.2 → 22.9 KB)*
+- **Bug history by reference** (`args.historyPath`): `history.mjs`'s output was inlined at 6+ KB on a 69-file PR; the intent + correctness packets now `Read` it. *(22.9 → 17.4 KB)*
+- **Per-shard manifests**: `build-args.mjs` writes `<scratch>/manifests/<n>-<label>.files` (one `<path>\t<slice path>` line per file, plus `all.files`) and `args.shards` carries `{label, count, manifest}` — a path per **shard**, not per **file**. A reviewer `Read`s its manifest to learn both its scope and where its hunks are. *(17.4 → 11.3 KB)*
+- **`plan.files` is no longer rebuilt in the sandbox.** Nothing needed it: every consumer is an agent that reads its manifest, and the off-diff demotion re-derives each finding's slice key from the finding's own path (equivalent — `inDiffScope` only ever looks up a file it has a finding for). This also drops the same 6.5 KB from the *returned* payload the orchestrator transcribes for `report.mjs`.
+- **D3/security stopped being handed the full file list** — it reads the whole diff anyway for cross-file taint, so the list was pure waste.
+- Fallbacks preserved throughout: a failed manifest write reverts to the inline `{label, files}` shape (`expandAspects` accepts either), and `args.diffIndex` remains the legacy path-keyed escape hatch.
+
+**Reviewers can now pull their own context: every agent carries `Bash`, gated by a read-only allowlist.**
+
+The context pack is *pushed* to every reviewer whether it's used or not. Giving reviewers `Bash` lets them *pull* the one fact they're missing instead — a `git log` on a suspect file, an `rg` for a caller — within the same 4-lookup budget.
+
+- **New `lib/allow-bash.mjs` + `hooks/hooks.json`** — a `PreToolUse` guard that keeps golden rule 1 (advisory, never edits) true by construction rather than by prompt wording. Read-only commands are auto-allowed (`git show/log/diff/blame/grep/rev-parse/…`, `rg`, `grep`, `sed -n`, `find`, `cat/head/tail`, `jq`, `awk`); everything else is denied — non-allowlisted binaries, write git subcommands, output redirection, command/process substitution, `sed -i`, a `w` write inside a `sed` program, `find -exec`/`-delete`, `-f` script files, and `git -c` (which can inject `core.pager`/`core.sshCommand`).
+- **Scoped to this plugin's own agents.** The guard reads its roster from `agents/*.md`; when the payload doesn't identify one of them it emits **no decision at all**, so a plugin-shipped hook can never wedge the user's own shell. It fails **open** (reviewers fall back to ordinary permission prompts) rather than blocking a session. `ACR_BASH_GUARD=all` applies the rules to every Bash call to verify them; `off` disables the hook.
+
+**Silent-degrade fixes** — both cases where the review quietly got thinner and nothing said so:
+
+- **`context-pack.mjs` crashed on a drifted working tree.** `enclosingDefinition` read `lines[i-1]` unguarded when a hunk's line number exceeded the working-tree file length (`--no-checkout`, reviewing uncommitted changes, a stale worktree). The pack then came back empty, which `build-args` read as "no pack" — indistinguishable from a healthy run. A/B on the same tree: committed code exits 1 with 0 bytes, fixed code produces 47.7 KB.
+- **An empty `context.txt` now raises a note** (`args.buildNotes` → the workflow's `notes` → relayed by `/review` step 5) instead of vanishing, per golden rule 3.
+
+**Smaller, better context pack** (56.6 KB → 47.7 KB on the same PR):
+
+- **Per-hunk windows instead of whole-file dumps**: a hunk the brace/indent heuristic can't bound gets a ±30-line window around itself; whole-file is now reserved for a file with no localizable hunks at all. Whole-file dumps on the test PR: **5 → 0**.
+- **Notes collapsed by reason** rather than one line per omission (15.9 KB → 6.6 KB).
+
 ## v0.25.0
 
 **Cheap-tier pipeline agents (`triage-classifier`, the completeness screen) now run on `sonnet` instead of `haiku`.**
