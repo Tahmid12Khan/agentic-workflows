@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { expandAspects, findingKey, newCaps, canSpawn, recordSpawn, buildReportPayload, pluginAgent, PLUGIN_NS, inDiffScope, partitionByScope, intentBrief, intentContext, screenPacket, selectGaps, CONSEQUENCE_DIRECTIVE, historyBlock, testSignalBlock, reviewerAddendum, DOUBLE_RUN_AGENTS, isDoubleRunAgent, dedupeFindings } from '../lib/review-orchestration.mjs';
+import { expandAspects, findingKey, newCaps, canSpawn, recordSpawn, buildReportPayload, pluginAgent, PLUGIN_NS, inDiffScope, partitionByScope, intentBrief, briefFor, CRITERIA_AGENTS, synthIntent, criticIntent, intentContext, screenPacket, selectGaps, CONSEQUENCE_DIRECTIVE, historyBlock, testSignalBlock, reviewerAddendum, DOUBLE_RUN_AGENTS, isDoubleRunAgent, dedupeFindings } from '../lib/review-orchestration.mjs';
 
 test('expandAspects = agents × shards, dims carried as a list', () => {
   const aspects = expandAspects(
@@ -85,7 +85,7 @@ test('pluginAgent namespaces bundled agents, passes built-ins through, is idempo
   assert.equal(pluginAgent(undefined), undefined);
 });
 
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 test('review-workflow.mjs declares a valid meta with 4 phases', () => {
   const src = readFileSync(new URL('../lib/review-workflow.mjs', import.meta.url), 'utf8');
   assert.match(src, /export const meta = \{/);
@@ -196,7 +196,7 @@ test('intentBrief keeps criteria + mismatches + only scrutiny-flagged groups', (
     model: 'domain', assumptions: [{ text: 'a' }], openQuestions: [{ question: 'q' }],
     groups: [
       { label: 'primary', kind: 'primary', scrutinize: false },
-      { label: 'drive-by', kind: 'extra', scrutinize: true },
+      { label: 'drive-by', kind: 'extra', scrutinize: true, files: ['src/main/java/deep/pkg/Foo.java'] },
     ],
   };
   const brief = intentBrief(intent);
@@ -213,6 +213,18 @@ test('intentBrief keeps criteria + mismatches + only scrutiny-flagged groups', (
   assert.equal(brief.openQuestions, undefined);
 });
 
+test('intentBrief reduces scrutinize-group files to basenames (the reviewer holds full paths in its manifest)', () => {
+  const brief = intentBrief({
+    groups: [{ label: 'x', scrutinize: true, files: ['a/b/c/Deep.java', 'Top.java'] }],
+  });
+  assert.deepEqual(brief.scrutinize[0].files, ['Deep.java', 'Top.java']);
+  // the rest of the group is untouched — only `files` is rewritten
+  assert.equal(brief.scrutinize[0].label, 'x');
+  // a group with no files array is passed through as-is (never gains an empty `files` key)
+  const noFiles = intentBrief({ groups: [{ label: 'y', scrutinize: true }] });
+  assert.ok(!('files' in noFiles.scrutinize[0]));
+});
+
 test('intentBrief tolerates a schema miss (non-object) by passing it through', () => {
   assert.equal(intentBrief('raw prose'), 'raw prose');
   assert.equal(intentBrief(null), null);
@@ -226,6 +238,90 @@ test('inlined intentBrief stays in sync with the canonical lib/review-orchestrat
   assert.match(src, /function intentBrief\(intent\)/);
   assert.match(src, /\(intent\.groups \?\? \[\]\)\.filter\(\(g\) => g\?\.scrutinize\)/);
   assert.match(src, /typeof intent !== 'object'/);
+});
+
+// --- per-consumer intent projections: only what each agent's contract actually reads ---
+
+test('briefFor gives the full brief to criteria-consuming reviewers and the summary alone to the rest', () => {
+  const brief = { summary: 's', acceptanceCriteria: [{ id: 'AC1' }], mismatches: [{ kind: 'missing' }], scrutinize: [{ label: 'g' }] };
+  for (const a of ['correctness-reviewer', 'test-adequacy-reviewer']) {
+    assert.deepEqual(briefFor(a, brief), brief, `${a} must keep the criteria it traces`);
+  }
+  for (const a of ['vuln-reviewer', 'data-store-reviewer', 'concurrency-reviewer', 'simplification-reviewer']) {
+    assert.deepEqual(briefFor(a, brief), { summary: 's' }, `${a} does not act on criteria`);
+  }
+  // schema-miss passthrough, same contract as intentBrief
+  assert.equal(briefFor('vuln-reviewer', 'raw prose'), 'raw prose');
+  assert.equal(briefFor('vuln-reviewer', null), null);
+});
+
+test('CRITERIA_AGENTS matches the agent files that actually act on acceptance criteria', () => {
+  // the guard against drift: an agent still told it receives criteria must be in the set, and an
+  // agent in the set must still be a real bundled reviewer.
+  const dir = new URL('../agents/', import.meta.url);
+  for (const agent of CRITERIA_AGENTS) {
+    const md = readFileSync(new URL(`${agent}.md`, dir), 'utf8');
+    assert.match(md, /acceptance criteri/i, `${agent} is in CRITERIA_AGENTS but never mentions criteria`);
+  }
+  for (const f of readdirSync(dir).filter((x) => x.endsWith('-reviewer.md'))) {
+    const agent = f.replace(/\.md$/, '');
+    if (CRITERIA_AGENTS.has(agent)) continue;
+    const md = readFileSync(new URL(f, dir), 'utf8');
+    assert.doesNotMatch(md, /an intent summary \+ acceptance criteria/,
+      `${agent} no longer receives criteria (briefFor sends summary only) — its input-packet line must not claim it does`);
+  }
+});
+
+test('synthIntent keeps only the fields review-synthesizer.md reads, and never re-sends openQuestions', () => {
+  const intent = {
+    summary: 's', acceptanceCriteria: [{ id: 'AC1' }], mismatches: [{ kind: 'missing' }],
+    openQuestions: [{ question: 'q' }], model: 'domain', assumptions: [{ text: 'a' }],
+    businessRisks: [{ text: 'r' }], groups: [{ label: 'g' }], statedIntent: 'x', derivedIntent: 'y',
+    expectedTests: ['t'], outOfScope: ['o'], extraIntents: ['e'],
+  };
+  assert.deepEqual(synthIntent(intent), { summary: 's', acceptanceCriteria: [{ id: 'AC1' }], mismatches: [{ kind: 'missing' }] });
+  // openQuestions travels as its own labelled prompt term — including it here would double-send it
+  assert.equal(synthIntent(intent).openQuestions, undefined);
+  assert.equal(synthIntent(null), null);
+});
+
+test('criticIntent keeps every gap-kind-bearing field but drops the per-group file lists', () => {
+  const intent = {
+    summary: 's', acceptanceCriteria: [{ id: 'AC1' }], mismatches: [{ kind: 'missing' }],
+    expectedTests: ['t'], businessRisks: [{ text: 'r' }], openQuestions: [{ question: 'q' }],
+    groups: [{ label: 'g', intent: 'i', scrutinize: true, files: ['a/b/C.java'] }],
+    model: 'domain', assumptions: [{ text: 'a' }], statedIntent: 'x', derivedIntent: 'y',
+    outOfScope: ['o'], extraIntents: ['e'],
+  };
+  const out = criticIntent(intent);
+  // each of these backs a gap kind the critic may emit
+  assert.deepEqual(out.acceptanceCriteria, intent.acceptanceCriteria);
+  assert.deepEqual(out.expectedTests, intent.expectedTests);
+  assert.deepEqual(out.businessRisks, intent.businessRisks);
+  assert.deepEqual(out.openQuestions, intent.openQuestions);
+  // clustering survives; the paths do not (the exhaustive critic gets the full diff + manifest)
+  assert.deepEqual(out.groups, [{ label: 'g', intent: 'i', scrutinize: true }]);
+  // no gap kind consumes these
+  for (const k of ['model', 'assumptions', 'statedIntent', 'derivedIntent', 'outOfScope', 'extraIntents']) {
+    assert.equal(out[k], undefined, `criticIntent must drop ${k}`);
+  }
+  assert.deepEqual(criticIntent({}).groups, []);
+  assert.equal(criticIntent(null), null);
+});
+
+test('the workflow routes each intent consumer through its own projection', () => {
+  const src = readFileSync(new URL('../lib/review-workflow.mjs', import.meta.url), 'utf8');
+  // reviewers + gap re-dispatch go through briefFor, never the raw brief
+  assert.match(src, /JSON\.stringify\(briefFor\(a\.agent, brief\)\)/);
+  assert.match(src, /JSON\.stringify\(briefFor\(g\.dispatch\.agent, brief\)\)/);
+  assert.doesNotMatch(src, /JSON\.stringify\(brief\)/, 'the un-narrowed brief must never be sent to an agent');
+  // synth + the exhaustive critic get their own slices, not the full intent object
+  assert.match(src, /JSON\.stringify\(synthIntent\(intent\)\)/);
+  assert.match(src, /JSON\.stringify\(criticIntent\(intent\)\)/);
+  assert.doesNotMatch(src, /JSON\.stringify\(intent\)/, 'the full intent object must never be inlined into a prompt');
+  // ...but the cheap SCREEN still receives the RAW intent: it has no diff and no file list, so
+  // harvester.groups[].files is its only source of re-dispatch targets.
+  assert.match(src, /screenPacket\(\{ plan, findings: allFindings, intent, extraDims: triageExtraDims \}\)/);
 });
 
 // --- intentContext: the intent-analyzer's REAL PR/comment/commit/ticket digest ---
@@ -530,6 +626,9 @@ const SYNCED_FUNCTIONS = [
   ['partition', '../lib/verify.mjs'],
   ['expandAspects', '../lib/review-orchestration.mjs'],
   ['intentBrief', '../lib/review-orchestration.mjs'],
+  ['briefFor', '../lib/review-orchestration.mjs'],
+  ['synthIntent', '../lib/review-orchestration.mjs'],
+  ['criticIntent', '../lib/review-orchestration.mjs'],
   ['screenPacket', '../lib/review-orchestration.mjs'],
   ['selectGaps', '../lib/review-orchestration.mjs'],
   ['historyBlock', '../lib/review-orchestration.mjs'],
