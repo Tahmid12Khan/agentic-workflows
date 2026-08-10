@@ -26,12 +26,12 @@ test('buildArgs: emits exactly the keys review-workflow.mjs destructures', () =>
     meta: { flags: { gate: true }, startedAt: 'T', prNumber: 7, checkout: null },
   });
   assert.deepEqual(Object.keys(out).sort(),
-    ['allManifest', 'allParts', 'buildNotes', 'bundle', 'checkout', 'contextPackPath', 'contextPackStats', 'diffIndex', 'diffPath', 'diffRanges', 'doctrinePaths', 'flags', 'historyPath', 'knownFalsePositives', 'plan', 'prNumber', 'routing', 'shards', 'sliceDir', 'startedAt', 'testSignal'].sort());
+    ['allManifest', 'allParts', 'buildNotes', 'bundle', 'checkout', 'contextPackPath', 'contextPackStats', 'diffIndex', 'diffPath', 'diffRanges', 'doctrineText', 'flags', 'historyPath', 'knownFalsePositives', 'plan', 'prNumber', 'routing', 'shards', 'sliceDir', 'startedAt', 'testSignal'].sort());
   assert.equal(out.allManifest, null);      // no manifest written → the workflow falls back to inline shard files
   assert.equal(out.allParts, null);         // no bundle written → D3/intent fall back to the bare diffRead
   assert.deepEqual(out.buildNotes, []);     // nothing degraded → no seeded note (the common case, zero cost)
   assert.equal(out.sliceDir, null);   // absent → null so the workflow falls back to the full diff (no slicing)
-  assert.deepEqual(out.doctrinePaths, {});   // WS1: absent → {} so the workflow attaches no doctrine
+  assert.deepEqual(out.doctrineText, {});   // WS1: absent → {} so the workflow attaches no doctrine
   assert.deepEqual(out.shards, [{ label: 'all', files: ['a.js'] }]); // lifted from plan
   assert.deepEqual(out.routing, { scrutiny: { foo: 1 }, checks: { bar: 2 } });
   assert.equal(out.prNumber, 7);
@@ -344,9 +344,9 @@ test('CLI: assembles from --dir and merges enrich.json onto bundle', () => {
     // carries the directory once instead of one absolute path per file
     assert.equal(a.sliceDir, join(dir, 'slices'));
     assert.match(readFileSync(join(a.sliceDir, sliceName('a.js')), 'utf8'), /\+c/);   // the slice holds the file's hunks
-    // WS1: doctrine paths are resolved to absolute paths under agents/doctrine/ at tier >= standard
-    assert.ok(a.doctrinePaths['correctness-reviewer'], 'correctness-reviewer gets doctrine at standard tier');
-    assert.match(a.doctrinePaths['correctness-reviewer'][0], /\/agents\/doctrine\/[a-z-]+\.md$/);
+    // WS1: doctrine fragment TEXT is read and inlined at tier >= standard (not just a resolved path)
+    assert.ok(a.doctrineText['correctness-reviewer'], 'correctness-reviewer gets doctrine at standard tier');
+    assert.match(a.doctrineText['correctness-reviewer'], /Lead with leverage/);   // distinctive phrase from severity-norms.md
     assert.deepEqual(a.knownFalsePositives, []);   // no plan.learning.store configured → []
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
