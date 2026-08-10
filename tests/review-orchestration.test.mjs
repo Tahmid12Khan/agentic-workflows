@@ -153,6 +153,16 @@ test('review-workflow.mjs declares a valid meta with 4 phases', () => {
   // the bare full-diff Read, falling back to diffRead only when allParts is empty/null.
   assert.match(src, /const allBundleParts = allParts \?\? \[\];/, 'scopeFor must check allParts for the D3 branch before falling back to the bare diff');
   assert.match(src, /Review EVERY changed file across those parts for dimension\(s\) \$\{dimList\}\./, 'D3 with allParts must still review every changed file, across the bundle parts');
+  // COST LEVER (bundle parts, Task 4): intent-analyzer (global, single pass, no per-file slice)
+  // also prefers allParts over the bare full-diff Read, falling back to diffRead + the
+  // lockfile-churn caveat only when allParts is empty/null — same fallback shape as D3.
+  assert.match(src, /const intentParts = allParts \?\? \[\];/, 'intent must check allParts before falling back to the bare diff');
+  assert.match(src, /const intentDiffRead = intentParts\.length/, 'intent must branch its diff-read instruction on intentParts');
+  assert.match(src, /: `\$\{diffRead\} \(ignore lockfile\/build-artifact\/vendored churn/, 'intent must fall back to diffRead with the lockfile-churn caveat when allParts is empty');
+  assert.match(src, /`\$\{intentDiffRead\}\\n\\nIn ORDER:/, 'intent-analyzer prompt must use intentDiffRead');
+  // intent's read budget is capped once it has full bundle coverage (no maxTurns option exists on
+  // the Workflow harness's agent() call — the cap must be a prompt-text instruction).
+  assert.match(src, /cap any FURTHER Read\/Grep\/Bash calls at 3/, 'intent must cap further lookups once it has full bundle coverage');
   // COST LEVER (sonnet-first verify): first-pass refuter groups run on modelFirst (sonnet), opus only for a critical group + the reverify guard.
   assert.match(src, /const firstModel = plan\.verify\?\.modelFirst/, 'batched verify must be sonnet-first via modelFirst');
   assert.match(src, /function intentBrief\(/, 'intentBrief must be inlined (canonical: lib/review-orchestration.mjs)');
