@@ -149,6 +149,10 @@ test('review-workflow.mjs declares a valid meta with 4 phases', () => {
   assert.match(src, /Read ALL of them now, /, 'scopeFor must instruct the reviewer to Read every bundle part');
   assert.match(src, /in one batch of parallel Read calls/, 'scopeFor must call out that parallel Reads cost one turn');
   assert.match(src, /=== FILE: <path> ===/, 'scopeFor must describe the bundle part boundary header');
+  // COST LEVER (bundle parts, Task 2): D3 (unsharded, cross-file taint) also prefers allParts over
+  // the bare full-diff Read, falling back to diffRead only when allParts is empty/null.
+  assert.match(src, /const allBundleParts = allParts \?\? \[\];/, 'scopeFor must check allParts for the D3 branch before falling back to the bare diff');
+  assert.match(src, /Review EVERY changed file across those parts for dimension\(s\) \$\{dimList\}\./, 'D3 with allParts must still review every changed file, across the bundle parts');
   // COST LEVER (sonnet-first verify): first-pass refuter groups run on modelFirst (sonnet), opus only for a critical group + the reverify guard.
   assert.match(src, /const firstModel = plan\.verify\?\.modelFirst/, 'batched verify must be sonnet-first via modelFirst');
   assert.match(src, /function intentBrief\(/, 'intentBrief must be inlined (canonical: lib/review-orchestration.mjs)');
