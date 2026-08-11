@@ -120,6 +120,39 @@ test('assemblePack drops extras (imports/callers) to fit the per-file cap, keepi
   assert.ok(notes.some((n) => /imports omitted \(per-file cap\)/.test(n)));
 });
 
+test('assemblePack fragments: one { path, text } per file, text matching that file’s slice of the whole pack', () => {
+  const entries = [
+    { path: 'a.js', bodyText: 'BODY-A', bodyFallback: false, importsText: 'imp-a', callers: [] },
+    { path: 'b.js', bodyText: 'BODY-B', bodyFallback: false, importsText: '', callers: [] },
+  ];
+  const { text, fragments } = assemblePack(entries);
+  assert.equal(fragments.length, 2);
+  assert.deepEqual(fragments.map((f) => f.path), ['a.js', 'b.js']);
+  for (const f of fragments) {
+    assert.match(f.text, new RegExp(`===== FILE: ${f.path.replace('.', '\\.')} =====`));
+    assert.ok(text.includes(f.text), `whole pack must contain fragment ${f.path} verbatim`);
+  }
+  // concatenating every fragment reproduces the whole pack's per-file sections exactly
+  assert.equal(fragments.map((f) => f.text).join(''), text.slice(text.indexOf('\n===== FILE:')));
+  assert.match(fragments[0].text, /BODY-A/);
+  assert.match(fragments[0].text, /imp-a/);
+  assert.doesNotMatch(fragments[1].text, /imp-a/);   // b.js's fragment carries only its own section
+});
+
+test('assemblePack fragments: a file dropped entirely by the total cap gets no fragment', () => {
+  const big = 'X'.repeat(400);
+  const entries = [
+    { path: 'a.js', bodyText: big, bodyFallback: false, importsText: '', callers: [] },
+    { path: 'b.js', bodyText: big, bodyFallback: false, importsText: '', callers: [] },
+  ];
+  const { fragments } = assemblePack(entries, { perFileCap: 1000, totalCap: 500 });
+  assert.deepEqual(fragments.map((f) => f.path), ['a.js']);   // b.js omitted → no fragment
+});
+
+test('assemblePack fragments: empty entries yields no fragments', () => {
+  assert.deepEqual(assemblePack([]).fragments, []);
+});
+
 test('assemblePack omits tail files once the total cap is hit, with a note', () => {
   const big = 'X'.repeat(400);
   const entries = [

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { renderReport, renderVerdict, renderHtml, agentCoverage, testSignalText, tallyLine, contextPackStatsLine, filesCappedWarning } from '../lib/render.mjs';
+import { renderReport, renderVerdict, renderHtml, agentCoverage, testSignalText, tallyLine, contextPackStatsLine, filesCappedWarning, filesFunneledWarning } from '../lib/render.mjs';
 
 const findings = [
   { dimension: 'D3', severity: 'critical', file: 'src/auth.ts', line: 42, title: 'Missing authz', confidence: 95, evidence: 'no role check', fix: 'add requirePermission' },
@@ -47,6 +47,64 @@ test('renderReport + renderHtml surface the files-capped WARN near the top', () 
   assert.match(html, /File limit exceeded/);
   assert.match(html, /217 files changed/);
   assert.doesNotMatch(renderHtml({ findings, criteria, tier: 'high' }), /File limit exceeded/);
+});
+
+// --- mega-PR funnel WARN (#10) ---
+test('filesFunneledWarning: null when the funnel never engaged, loud WARN with cluster detail when it did', () => {
+  assert.equal(filesFunneledWarning(null), null);
+  assert.equal(filesFunneledWarning({ mechanicalClusters: 0 }), null);   // engaged but nothing was mechanical → no warn
+  const w = filesFunneledWarning({
+    threshold: 250, hot: 20, mechanicalClusters: 1, mechanicalTotal: 100, sampled: 15, skippedTotal: 85,
+    clusters: [{ label: 'gen/*.py', total: 100, sampled: 15, skipped: 85 }],
+  });
+  assert.match(w, /WARN/);
+  assert.match(w, /250/);   // threshold
+  assert.match(w, /100/);   // mechanicalTotal
+  assert.match(w, /15/);    // sampled
+  assert.match(w, /85/);    // skippedTotal
+  assert.match(w, /gen\/\*\.py/);   // cluster label
+  assert.match(w, /heuristic/i);
+});
+
+test('renderReport + renderHtml surface the files-funneled WARN, absent when the funnel never engaged', () => {
+  const funneled = {
+    threshold: 250, hot: 20, mechanicalClusters: 1, mechanicalTotal: 100, sampled: 15, skippedTotal: 85,
+    clusters: [{ label: 'gen/*.py', total: 100, sampled: 15, skipped: 85 }],
+  };
+  const md = renderReport({ findings, criteria, tier: 'high', filesFunneled: funneled });
+  assert.match(md, /WARN — mega-PR funnel engaged/);
+  assert.match(md, /gen\/\*\.py/);
+  assert.doesNotMatch(renderReport({ findings, criteria, tier: 'high' }), /mega-PR funnel/);
+  const html = renderHtml({ findings, criteria, tier: 'high', filesFunneled: funneled });
+  assert.match(html, /Mega-PR funnel engaged/);
+  assert.doesNotMatch(renderHtml({ findings, criteria, tier: 'high' }), /Mega-PR funnel/);
+});
+
+// Composed case (review fix-round finding): when the funnel runs FIRST and selectReviewFiles then
+// caps its OUTPUT, filesCapped.total is the funnel's reduced candidate count, not the change's true
+// original file count — the files-capped WARN must still name the true count somewhere, standalone,
+// so a reader who only sees this one line is never misled about the PR's real size.
+test('filesCappedWarning composed with filesFunneled states the TRUE original file count, not just the funnel-reduced one', () => {
+  const funneled = { threshold: 250, totalFiles: 260, hot: 10, mechanicalClusters: 1, mechanicalTotal: 250, sampled: 38, skippedTotal: 212, clusters: [] };
+  const capped = { max: 10, total: 48, reviewed: 10, dropped: 38 };   // 48 = the FUNNEL's output, not the true 260
+  const w = filesCappedWarning(capped, funneled);
+  assert.match(w, /260/, 'must state the true original file count somewhere');
+  assert.match(w, /48/, 'must still name the funnel-reduced candidate count for context');
+  // uncomposed call (no filesFunneled) must be completely unaffected — same text as before this fix
+  const plain = filesCappedWarning(capped);
+  assert.doesNotMatch(plain, /260/);
+  assert.match(plain, /48/);
+});
+
+test('renderReport + renderHtml: the composed files-capped WARN states the true pre-funnel total', () => {
+  const funneled = { threshold: 250, totalFiles: 260, hot: 10, mechanicalClusters: 1, mechanicalTotal: 250, sampled: 38, skippedTotal: 212, clusters: [{ label: 'gen/*.py', total: 250, sampled: 38, skipped: 212 }] };
+  const capped = { max: 10, total: 48, reviewed: 10, dropped: 38 };
+  const md = renderReport({ findings, criteria, tier: 'high', filesCapped: capped, filesFunneled: funneled });
+  assert.match(md, /WARN — file limit exceeded/);
+  assert.match(md, /260/, 'markdown files-capped WARN must state the true original count');
+  const html = renderHtml({ findings, criteria, tier: 'high', filesCapped: capped, filesFunneled: funneled });
+  assert.match(html, /File limit exceeded/);
+  assert.match(html, /260/, 'HTML files-capped banner must state the true original count');
 });
 
 // --- S6.4: executed-test signal in the report header ---

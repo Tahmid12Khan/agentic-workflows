@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { expandAspects, findingKey, newCaps, canSpawn, recordSpawn, buildReportPayload, pluginAgent, PLUGIN_NS, inDiffScope, partitionByScope, intentBrief, briefFor, CRITERIA_AGENTS, synthIntent, criticIntent, intentContext, screenPacket, selectGaps, CONSEQUENCE_DIRECTIVE, historyBlock, testSignalBlock, reviewerAddendum, DOUBLE_RUN_AGENTS, isDoubleRunAgent, dedupeFindings } from '../lib/review-orchestration.mjs';
+import { expandAspects, routedFiles, findingKey, newCaps, canSpawn, recordSpawn, buildReportPayload, pluginAgent, PLUGIN_NS, inDiffScope, partitionByScope, intentBrief, briefFor, CRITERIA_AGENTS, synthIntent, criticIntent, intentContext, screenPacket, selectGaps, CONSEQUENCE_DIRECTIVE, historyBlock, testSignalBlock, reviewerAddendum, DOUBLE_RUN_AGENTS, isDoubleRunAgent, dedupeFindings } from '../lib/review-orchestration.mjs';
 
 test('expandAspects = agents × shards, dims carried as a list', () => {
   const aspects = expandAspects(
@@ -76,6 +76,240 @@ test('expandAspects collapses unsharded dims to one all-files aspect', () => {
   assert.equal(d3.length, 1);
   assert.deepEqual(d3[0], { dims: ['D3'], agent: 'vuln-reviewer', shardId: 'all', files: ['a.ts', 'b.ts'], manifest: null, count: 2, parts: null });
   assert.equal(aspects.filter((a) => a.dims.includes('D2')).length, 2);
+});
+
+// --- routedFiles (dimension-scoped bundles, #9) ---
+
+test('routedFiles: a single routed dim (D5/test-adequacy) narrows to matching test files', () => {
+  const files = ['src/App.tsx', 'src/App.test.tsx'];
+  assert.deepEqual(routedFiles(['D5'], files), ['src/App.test.tsx']);
+});
+
+test('routedFiles: D6 alone narrows to data/migration/repository files', () => {
+  const files = ['app/UserRepository.java', 'app/UserController.java'];
+  assert.deepEqual(routedFiles(['D6'], files), ['app/UserRepository.java']);
+});
+
+test('routedFiles: D8 is NOT independently routable — an agent whose dims include D8 keeps FULL scope, even though D6\'s pattern would otherwise match', () => {
+  // D8 ("connections & resources": pool sizing, connection leaks, closeable lifecycle, HTTP
+  // keep-alive) has no file-path signal of its own — none of that lives in .sql/migration/repository
+  // files, so it must never ride on D6's DATA_FILE test. data-store-reviewer covers D6+D8 together
+  // (see triage.mjs DIMENSION_AGENTS), so this is the realistic production dims list for that agent.
+  const files = ['app/UserRepository.java', 'app/UserController.java'];
+  assert.deepEqual(routedFiles(['D6', 'D8'], files), files);
+  assert.deepEqual(routedFiles(['D8'], files), files);
+});
+
+test('routedFiles: TEST_FILE now catches pytest test_*.py, C#/Java/Kotlin *Test(s), and bare _spec suffixes', () => {
+  // Confirmed misses from the whole-branch review: a PARTIAL match (some files caught, most missed)
+  // is the dangerous case — it silently narrows a reviewer away from the file that actually matters.
+  assert.deepEqual(routedFiles(['D5'], ['mypkg/test_payments.py', 'mypkg/payments.py']), ['mypkg/test_payments.py']);
+  assert.deepEqual(routedFiles(['D5'], ['app/FooTests.cs', 'app/Foo.cs']), ['app/FooTests.cs']);
+  assert.deepEqual(routedFiles(['D5'], ['lib/foo_spec.rb', 'lib/foo.rb']), ['lib/foo_spec.rb']);
+  // sanity: ordinary non-test files in the same shard must still NOT match
+  assert.deepEqual(routedFiles(['D5'], ['src/latest_report.py', 'src/testimonial.py']), ['src/latest_report.py', 'src/testimonial.py']);
+});
+
+test('routedFiles: CONTRACT_FILE now catches a Controller-suffixed file with no controller/ directory', () => {
+  assert.deepEqual(routedFiles(['D10'], ['src/api/UserController.java', 'src/api/openapi.yaml']),
+    ['src/api/UserController.java', 'src/api/openapi.yaml']);
+  assert.deepEqual(routedFiles(['D10'], ['src/api/UserController.java', 'src/api/UserService.java']),
+    ['src/api/UserController.java']);
+  // sanity: an unrelated file must still NOT match
+  assert.deepEqual(routedFiles(['D10'], ['src/api/ControlPanel.java']), ['src/api/ControlPanel.java']);
+});
+
+test('routedFiles: an agent mixing a routed and an unrouted dim keeps FULL scope, never partial', () => {
+  // D5 is routable (TEST_FILE); D2 has no routing test at all. Narrowing only on D5's test would
+  // silently under-serve D2's full-diff need, so the whole aspect must fall back to full scope.
+  const files = ['src/App.tsx', 'src/App.test.tsx'];
+  assert.deepEqual(routedFiles(['D5', 'D2'], files), files);
+});
+
+test('routedFiles: zero matches in a shard falls back to the full file list, never empty', () => {
+  const files = ['src/App.tsx', 'src/util.ts'];   // no test files in this shard
+  assert.deepEqual(routedFiles(['D5'], files), files);
+});
+
+test('routedFiles: an unmapped/empty dims list returns files unchanged', () => {
+  const files = ['a.ts', 'b.ts'];
+  assert.deepEqual(routedFiles([], files), files);
+  assert.deepEqual(routedFiles(undefined, files), files);
+});
+
+// --- expandAspects × routedFiles integration ---
+
+test('expandAspects narrows a routed dimension to a strict file subset, nulling manifest/parts and updating count', () => {
+  const shards = [{
+    label: 'src', count: 2, manifest: '/s/manifests/0-src.files',
+    files: ['app/UserRepository.java', 'app/UserController.java'],
+    parts: ['/s/bundles/0-src-0.txt'],
+  }];
+  const aspects = expandAspects({ D6: 'data-store-reviewer' }, shards);
+  assert.equal(aspects.length, 1);
+  const a = aspects[0];
+  assert.deepEqual(a.dims, ['D6']);
+  assert.deepEqual(a.files, ['app/UserRepository.java']);
+  assert.equal(a.manifest, null);   // no longer matches the full shard on disk — nulled
+  assert.equal(a.parts, null);
+  assert.equal(a.count, 1);
+});
+
+test('expandAspects: an aspect whose dims include D8 keeps FULL scope even though D6\'s pattern would otherwise narrow', () => {
+  // data-store-reviewer covers D6+D8 together (triage.mjs DIMENSION_AGENTS) — the second pass folds
+  // both dims into ONE aspect, and D8 has no routing test at all, so the "any unrouted dim => full
+  // scope" rule must win: the aspect must NOT narrow to just the Repository file.
+  const shards = [{
+    label: 'src', count: 2, manifest: '/s/manifests/0-src.files',
+    files: ['app/UserRepository.java', 'app/UserController.java'],
+    parts: ['/s/bundles/0-src-0.txt'],
+  }];
+  const aspects = expandAspects({ D6: 'data-store-reviewer', D8: 'data-store-reviewer' }, shards);
+  assert.equal(aspects.length, 1);
+  const a = aspects[0];
+  assert.deepEqual(a.dims, ['D6', 'D8']);
+  assert.deepEqual(a.files, ['app/UserRepository.java', 'app/UserController.java']);   // untouched
+  assert.equal(a.manifest, '/s/manifests/0-src.files');   // NOT nulled — nothing was narrowed
+  assert.deepEqual(a.parts, ['/s/bundles/0-src-0.txt']);
+  assert.equal(a.count, 2);
+});
+
+// --- expandAspects × routing.enabled off-switch (#9 fix 3) ---
+
+test('expandAspects: routingEnabled:false disables the SECONDARY (inline-files) narrowing path', () => {
+  const shards = [{ label: 'src', files: ['app/UserRepository.java', 'app/UserController.java'] }];
+  const aspects = expandAspects({ D6: 'data-store-reviewer' }, shards, { routingEnabled: false });
+  assert.deepEqual(aspects[0].files, ['app/UserRepository.java', 'app/UserController.java']);
+});
+
+test('expandAspects: routingEnabled:false also ignores a precomputed routed[agent] entry (the PRIMARY path)', () => {
+  const shards = [{
+    label: 'src', count: 2, manifest: '/s/manifests/0-src.files', parts: ['/s/bundles/0-src-0.txt'], files: [],
+    routed: { 'data-store-reviewer': { manifest: '/s/manifests/0-src-data-store-reviewer.files', parts: ['/s/bundles/0-src-data-store-reviewer-0.txt'], count: 1 } },
+  }];
+  const aspects = expandAspects({ D6: 'data-store-reviewer' }, shards, { routingEnabled: false });
+  const a = aspects[0];
+  assert.equal(a.manifest, '/s/manifests/0-src.files');   // the FULL shard manifest, not the routed one
+  assert.deepEqual(a.parts, ['/s/bundles/0-src-0.txt']);
+  assert.equal(a.count, 2);
+});
+
+test('expandAspects: routingEnabled defaults to true (omitted opts narrow exactly as before)', () => {
+  const shards = [{ label: 'src', files: ['app/UserRepository.java', 'app/UserController.java'] }];
+  const aspects = expandAspects({ D6: 'data-store-reviewer' }, shards);
+  assert.deepEqual(aspects[0].files, ['app/UserRepository.java']);
+});
+
+test('expandAspects: an unrouted dim (correctness-reviewer, D1/D2/D12) is never narrowed', () => {
+  const shards = [{ label: 'src', files: ['app/UserRepository.java', 'app/UserController.java'], manifest: '/s/m.files', parts: ['/s/b-0.txt'] }];
+  const aspects = expandAspects({ D1: 'correctness-reviewer', D2: 'correctness-reviewer', D12: 'correctness-reviewer' }, shards);
+  assert.deepEqual(aspects[0].files, ['app/UserRepository.java', 'app/UserController.java']);
+  assert.equal(aspects[0].manifest, '/s/m.files');
+  assert.equal(aspects[0].parts.length, 1);
+});
+
+test('expandAspects: D3\'s unsharded aspect is NEVER narrowed, even if its dim were hypothetically routable', () => {
+  // Use D6 (a real ROUTED dim) as the unsharded one here on purpose: if the exclusion were
+  // (incorrectly) keyed off ROUTED-table membership or off the literal 'all' shardId rather than
+  // the unsharded/full-scope path itself, this would wrongly narrow to just the Repository file.
+  const shards = [{ label: 'A', files: ['x/Repository.java', 'x/plain.js'] }];
+  const aspects = expandAspects({ D6: 'vuln-reviewer' }, shards, { unsharded: ['D6'] });
+  assert.equal(aspects.length, 1);
+  assert.equal(aspects[0].shardId, 'all');
+  assert.deepEqual(aspects[0].files, ['x/Repository.java', 'x/plain.js']);   // untouched, full scope
+});
+
+test('expandAspects: a shard label that happens to be "all" (singleShard\'s default, unrelated to unsharded dims) still narrows normally', () => {
+  // lib/shard.mjs's singleShard() labels the sole shard 'all' for any PR below the sharding
+  // threshold — the common case. A shardId==='all' check would misdetect this as the D3-style
+  // full-scope aspect and silently disable narrowing for most PRs; it must not.
+  const shards = [{
+    label: 'all', count: 2, manifest: '/s/manifests/0-all.files',
+    files: ['x/Repository.java', 'x/plain.js'],
+    parts: ['/s/bundles/0-all-0.txt'],
+  }];
+  const aspects = expandAspects({ D6: 'data-store-reviewer' }, shards);   // NOT in `unsharded`
+  assert.equal(aspects.length, 1);
+  assert.equal(aspects[0].shardId, 'all');
+  assert.deepEqual(aspects[0].files, ['x/Repository.java']);
+  assert.equal(aspects[0].manifest, null);
+  assert.equal(aspects[0].parts, null);
+  assert.equal(aspects[0].count, 1);
+});
+
+test('expandAspects: a shard with a precomputed routed[agent] entry uses it — the PRIMARY, production path', () => {
+  // The realistic production shape: build-args.mjs already wrote {label, count, manifest, parts}
+  // (no inline `files` — the sandbox never sees the real file list) PLUS a `routed` map it
+  // precomputed while it still held `s.files` in memory. This must win over the (here, inert)
+  // inline-narrowing fallback.
+  const shards = [{
+    label: 'src', count: 2, manifest: '/s/manifests/0-src.files', parts: ['/s/bundles/0-src-0.txt'],
+    files: [],
+    routed: {
+      'data-store-reviewer': {
+        manifest: '/s/manifests/0-src-data-store-reviewer.files',
+        parts: ['/s/bundles/0-src-data-store-reviewer-0.txt'],
+        count: 1,
+      },
+    },
+  }];
+  const aspects = expandAspects({ D6: 'data-store-reviewer', D8: 'data-store-reviewer' }, shards);
+  assert.equal(aspects.length, 1);
+  const a = aspects[0];
+  assert.equal(a.manifest, '/s/manifests/0-src-data-store-reviewer.files');
+  assert.deepEqual(a.parts, ['/s/bundles/0-src-data-store-reviewer-0.txt']);
+  assert.equal(a.count, 1);
+});
+
+test('expandAspects: two shards\' routed entries for the SAME agent never cross-contaminate', () => {
+  // Both shards independently route for test-adequacy-reviewer — each aspect (keyed by
+  // `${agent} ${shardId}`, via `routedByAspect`'s aspect-object-reference keying) must only ever
+  // adopt ITS OWN shard's routed entry, never the sibling shard's.
+  const shards = [
+    {
+      label: 'A', count: 2, manifest: '/s/manifests/0-A.files', parts: ['/s/bundles/0-A-0.txt'], files: [],
+      routed: { 'test-adequacy-reviewer': { manifest: '/s/manifests/0-A-ta.files', parts: ['/s/bundles/0-A-ta-0.txt'], count: 1 } },
+    },
+    {
+      label: 'B', count: 2, manifest: '/s/manifests/1-B.files', parts: ['/s/bundles/1-B-0.txt'], files: [],
+      routed: { 'test-adequacy-reviewer': { manifest: '/s/manifests/1-B-ta.files', parts: ['/s/bundles/1-B-ta-0.txt'], count: 1 } },
+    },
+  ];
+  const aspects = expandAspects({ D5: 'test-adequacy-reviewer' }, shards);
+  assert.equal(aspects.length, 2);
+  const aspectA = aspects.find((a) => a.shardId === 'A');
+  const aspectB = aspects.find((a) => a.shardId === 'B');
+  assert.equal(aspectA.manifest, '/s/manifests/0-A-ta.files');
+  assert.deepEqual(aspectA.parts, ['/s/bundles/0-A-ta-0.txt']);
+  assert.equal(aspectB.manifest, '/s/manifests/1-B-ta.files');
+  assert.deepEqual(aspectB.parts, ['/s/bundles/1-B-ta-0.txt']);
+  // explicit cross-check: neither aspect ever picked up the OTHER shard's routed manifest/bundle
+  assert.notEqual(aspectA.manifest, aspectB.manifest);
+  assert.notEqual(aspectA.parts[0], aspectB.parts[0]);
+  assert.notEqual(aspectA.manifest, shards[1].routed['test-adequacy-reviewer'].manifest);
+  assert.notEqual(aspectB.manifest, shards[0].routed['test-adequacy-reviewer'].manifest);
+});
+
+test('expandAspects: a shard\'s routed map missing THIS agent falls back to inline-narrowing for it', () => {
+  // `routed` has an entry for data-store-reviewer only; the correctness-reviewer aspect on the
+  // SAME shard must fall back to the secondary path (here, staying full since it's unrouted) —
+  // one agent's routed entry must never leak into another agent's aspect.
+  const shards = [{
+    label: 'src', files: ['app/UserRepository.java', 'app/UserController.java'],
+    manifest: '/s/m.files', parts: ['/s/b-0.txt'],
+    routed: { 'data-store-reviewer': { manifest: '/s/m-ds.files', parts: ['/s/b-ds-0.txt'], count: 1 } },
+  }];
+  const aspects = expandAspects({ D1: 'correctness-reviewer' }, shards);
+  assert.equal(aspects[0].manifest, '/s/m.files');   // untouched — no routed entry for this agent
+  assert.deepEqual(aspects[0].parts, ['/s/b-0.txt']);
+});
+
+test('expandAspects: no `routed` field on the shard falls back to inline-narrowing (manifest-write-failure shape)', () => {
+  const shards = [{ label: 'src', files: ['app/UserRepository.java', 'app/UserController.java'], manifest: '/s/m.files', parts: ['/s/b-0.txt'] }];
+  const aspects = expandAspects({ D6: 'data-store-reviewer' }, shards);
+  assert.deepEqual(aspects[0].files, ['app/UserRepository.java']);
+  assert.equal(aspects[0].manifest, null);   // inline-narrowing fallback nulls it, same as before
+  assert.equal(aspects[0].count, 1);
 });
 
 test('findingKey is line-sensitive and title-normalized', () => {
@@ -214,6 +448,23 @@ test('review-workflow.mjs declares a valid meta with 4 phases', () => {
   assert.match(src, /const \{ plan, bundle, diffPath, contextPackPath, diffIndex,/, 'diffPath/contextPackPath/diffIndex must be destructured from args');
   assert.match(src, /const packBlock =/, 'the context pack path must be turned into a prepend block');
   assert.match(src, /\$\{packBlock\}/, 'packBlock must be prepended to the reviewer packet(s)');
+  // Task 1 (#6): packBlock must branch on contextDir (per-file on-demand fragments) BEFORE falling
+  // back to the original whole-pack contextPackPath instruction, so a reviewer never reads the
+  // whole pack up front when fragments are available.
+  assert.match(src, /const \{ plan, bundle, diffPath, contextPackPath, diffIndex, historyPath, testSignal, shards, routing, flags, startedAt, prNumber, checkout, diffRanges, sliceDir, contextDir,/, 'contextDir must be destructured from args');
+  assert.match(src, /const packBlock = contextDir\n(\s*)\? `Per-file CONTEXT FRAGMENTS/, 'packBlock must check contextDir first');
+  assert.match(src, /pull ONLY the fragment for a file you suspect has a finding/, 'the contextDir branch must instruct on-demand pulls, scoped to a suspected file');
+  assert.match(src, /\$\{contextDir\}\/<slice-name>/, 'the contextDir branch must point at the per-file fragment path, named via sliceName');
+  assert.match(src, /: contextPackPath\n(\s*)\? `A shared CONTEXT PACK.*Read it FIRST, before the diff/, 'the whole-pack fallback instruction must still exist when contextDir is absent');
+  // Task 2 (#7): a batched verifier group gets the SAME per-file context fragments as a reviewer,
+  // via a contextDir/sliceName lookup mirroring slicesFor's diff-slice lookup — for non-taint groups
+  // only (taint verifiers already reason cross-file over the whole diff and are left as-is).
+  assert.match(src, /const contextFragmentsFor = \(files = \[\]\) => \(contextDir/, 'contextFragmentsFor helper must exist for verifier groups');
+  assert.match(src, /const gFragments = isTaint \? \[\] : contextFragmentsFor\(group\.files\)/, 'spawnBatchVerifier must fetch context fragments for non-taint groups only, never taint');
+  assert.match(src, /The enclosing definitions\/imports\/callers for the file\(s\) you're verifying are at/, 'spawnBatchVerifier prompt must point the verifier at its context fragment(s)');
+  // GENEROUS read-budget for verifiers ("do not starve them" — the plan's own words): wider than the
+  // dimension reviewers' 4-lookup budget, since a verifier batch can span several files.
+  assert.match(src, /Make at most 7 additional lookups/, 'spawnBatchVerifier must give verifiers a wider (7) read-budget than the reviewer 4-lookup budget');
   // ARGS-BY-REFERENCE: the diff is NEVER inlined — agents Read it from diffPath. The old in-sandbox
   // diff-trim helpers must be gone (their return re-inflated args past the Workflow inline limit).
   assert.match(src, /const diffRead = `Read the diff at \$\{diffPath\}/, 'the workflow must hand agents the diff PATH to Read, not inlined text');
@@ -688,6 +939,7 @@ const SYNCED_FUNCTIONS = [
   ['selectForVerification', '../lib/verify.mjs'],
   ['resolveVerification', '../lib/verify.mjs'],
   ['partition', '../lib/verify.mjs'],
+  ['routedFiles', '../lib/review-orchestration.mjs'],
   ['expandAspects', '../lib/review-orchestration.mjs'],
   ['intentBrief', '../lib/review-orchestration.mjs'],
   ['briefFor', '../lib/review-orchestration.mjs'],

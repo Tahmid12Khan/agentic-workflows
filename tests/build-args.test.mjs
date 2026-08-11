@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync, readFileSync, rmSync, existsSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, readFileSync, rmSync, existsSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { buildArgs, mergeEnrich, knownFalsePositives, rangesBySliceName, sliceNameCollision, manifestText, manifestName, bundleParts, contextPackNote } from '../lib/build-args.mjs';
@@ -26,11 +26,12 @@ test('buildArgs: emits exactly the keys review-workflow.mjs destructures', () =>
     meta: { flags: { gate: true }, startedAt: 'T', prNumber: 7, checkout: null },
   });
   assert.deepEqual(Object.keys(out).sort(),
-    ['allManifest', 'allParts', 'buildNotes', 'bundle', 'checkout', 'contextPackPath', 'contextPackStats', 'diffIndex', 'diffPath', 'diffRanges', 'doctrineText', 'flags', 'historyPath', 'knownFalsePositives', 'plan', 'prNumber', 'routing', 'shards', 'sliceDir', 'startedAt', 'testSignal'].sort());
+    ['allManifest', 'allParts', 'buildNotes', 'bundle', 'checkout', 'contextDir', 'contextPackPath', 'contextPackStats', 'diffIndex', 'diffPath', 'diffRanges', 'doctrineText', 'flags', 'historyPath', 'knownFalsePositives', 'plan', 'prNumber', 'routing', 'shards', 'sliceDir', 'startedAt', 'testSignal'].sort());
   assert.equal(out.allManifest, null);      // no manifest written → the workflow falls back to inline shard files
   assert.equal(out.allParts, null);         // no bundle written → D3/intent fall back to the bare diffRead
   assert.deepEqual(out.buildNotes, []);     // nothing degraded → no seeded note (the common case, zero cost)
   assert.equal(out.sliceDir, null);   // absent → null so the workflow falls back to the full diff (no slicing)
+  assert.equal(out.contextDir, null); // absent → null so the workflow falls back to the whole context pack
   assert.deepEqual(out.doctrineText, {});   // WS1: absent → {} so the workflow attaches no doctrine
   assert.deepEqual(out.shards, [{ label: 'all', files: ['a.js'] }]); // lifted from plan
   assert.deepEqual(out.routing, { scrutiny: { foo: 1 }, checks: { bar: 2 } });
@@ -118,6 +119,12 @@ test('buildArgs: provided context pack stats are carried through', () => {
   const stats = { sizeBytes: 100, files: 1, imports: 1, callerHits: 2, hop2: 0, typeBoundary: 0 };
   const out = buildArgs({ plan: {}, bundle: {}, diffPath: '/d', contextPackStats: stats });
   assert.deepEqual(out.contextPackStats, stats);
+});
+
+test('buildArgs: a provided context fragment dir is carried through, absent one degrades to null', () => {
+  assert.equal(buildArgs({ plan: {}, bundle: {}, diffPath: '/d' }).contextDir, null);
+  const out = buildArgs({ plan: {}, bundle: {}, diffPath: '/d', contextDir: '/scratch/context' });
+  assert.equal(out.contextDir, '/scratch/context');
 });
 
 test('rangesBySliceName: rekeys the reviewed files\u2019 ranges by slice name, dropping files absent from the diff', () => {
@@ -355,6 +362,186 @@ test('CLI: a bundle-write failure leaves manifests intact, only nulls parts/allP
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
+test('CLI: writes a routed manifest/bundle for a shard whose dims are all independently routable', () => {
+  // Dimension-scoped bundles (#9), extended: build-args.mjs still holds the shard's real `files`
+  // at this point (before shards are stripped to {label, count, manifest, parts}), so it can
+  // precompute a NARROWER manifest/bundle per agent whose whole dim set is routable — this is the
+  // path that makes narrowing actually effective in production, where the sandboxed workflow never
+  // sees an inline file list to narrow itself.
+  const dir = mkdtempSync(join(tmpdir(), 'build-args-routed-'));
+  try {
+    const files = ['src/app/UserRepository.java', 'src/app/UserController.java', 'src/app/UserService.test.js'];
+    writeFileSync(join(dir, 'plan.json'), JSON.stringify({
+      tier: 'standard', fileCount: files.length, files,
+      shards: [{ label: 'src', files }],
+      dimensionAgents: {
+        D1: 'correctness-reviewer', D2: 'correctness-reviewer', D12: 'correctness-reviewer',
+        D5: 'test-adequacy-reviewer',
+        // D6 alone (D8 is deliberately NOT independently routable — see routedFiles' ROUTED table —
+        // so a data-store-reviewer aspect covering D6+D8 together would stay full-scope instead).
+        D6: 'data-store-reviewer',
+      },
+    }));
+    writeFileSync(join(dir, 'diff.txt'), files.map((f) =>
+      `diff --git a/${f} b/${f}\n--- a/${f}\n+++ b/${f}\n@@ -1 +1,2 @@\n-a\n+b\n+c\n`).join(''));
+    const r = spawnSync(process.execPath, [SCRIPT, '--dir', dir], { encoding: 'utf8' });
+    assert.equal(r.status, 0, r.stderr);
+    const a = JSON.parse(r.stdout);
+
+    const shard = a.shards[0];
+    assert.ok(shard.routed, 'shard should carry a routed map');
+
+    // data-store-reviewer (D6 alone) narrows to just the Repository file
+    const ds = shard.routed['data-store-reviewer'];
+    assert.ok(ds, 'data-store-reviewer should get a routed entry');
+    assert.equal(ds.count, 1);
+    const dsLines = readFileSync(ds.manifest, 'utf8').split('\n').filter(Boolean);
+    assert.equal(dsLines.length, 1);
+    assert.match(dsLines[0], /UserRepository\.java/);
+    assert.match(readFileSync(ds.parts[0], 'utf8'), /UserRepository\.java/);
+
+    // test-adequacy-reviewer (D5) narrows to just the test file
+    const ta = shard.routed['test-adequacy-reviewer'];
+    assert.ok(ta, 'test-adequacy-reviewer should get a routed entry');
+    assert.equal(ta.count, 1);
+    assert.match(readFileSync(ta.manifest, 'utf8'), /UserService\.test\.js/);
+
+    // correctness-reviewer (D1/D2/D12, always full-scope) gets NO routed entry at all
+    assert.equal(shard.routed['correctness-reviewer'], undefined);
+
+    // Fix 3: ONE aggregate note summarizes both narrowed pairs (data-store + test-adequacy), not
+    // one note per shard/agent — 2 pairs narrowed to 1 file each out of 3 files each (2/6 total).
+    assert.equal(a.buildNotes.length, 1);
+    assert.match(a.buildNotes[0], /dimension routing narrowed 2 \(shard, agent\) pair\(s\) to 2\/6 files total/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('CLI: a shard where nothing narrows produces no `routed` entries at all', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'build-args-noroute-'));
+  try {
+    const files = ['src/app/Widget.js', 'src/app/Gadget.js'];   // no test/data/contract files among them
+    writeFileSync(join(dir, 'plan.json'), JSON.stringify({
+      tier: 'standard', fileCount: files.length, files,
+      shards: [{ label: 'src', files }],
+      dimensionAgents: { D5: 'test-adequacy-reviewer', D6: 'data-store-reviewer', D8: 'data-store-reviewer' },
+    }));
+    writeFileSync(join(dir, 'diff.txt'), files.map((f) =>
+      `diff --git a/${f} b/${f}\n--- a/${f}\n+++ b/${f}\n@@ -1 +1,2 @@\n-a\n+b\n+c\n`).join(''));
+    const r = spawnSync(process.execPath, [SCRIPT, '--dir', dir], { encoding: 'utf8' });
+    assert.equal(r.status, 0, r.stderr);
+    const a = JSON.parse(r.stdout);
+    assert.equal(a.shards[0].routed, undefined);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('CLI: a run with no dimensionAgents at all skips routed-writing entirely (no spurious note)', () => {
+  // Regression guard: an earlier version of this step unconditionally mkdirSync'd the
+  // manifests/bundles dirs even with nothing to route, which could raise a note over an unrelated
+  // fs condition in a directory this step had no actual reason to touch this run.
+  const dir = mkdtempSync(join(tmpdir(), 'build-args-noagents-'));
+  try {
+    const files = ['src/a.js'];
+    writeFileSync(join(dir, 'plan.json'), JSON.stringify({ tier: 'standard', fileCount: 1, files, shards: [{ label: 'src', files }] }));
+    writeFileSync(join(dir, 'diff.txt'), `diff --git a/src/a.js b/src/a.js\n--- a/src/a.js\n+++ b/src/a.js\n@@ -1 +1,2 @@\n-a\n+b\n+c\n`);
+    const r = spawnSync(process.execPath, [SCRIPT, '--dir', dir], { encoding: 'utf8' });
+    assert.equal(r.status, 0, r.stderr);
+    const a = JSON.parse(r.stdout);
+    assert.equal(a.shards[0].routed, undefined);
+    assert.deepEqual(a.buildNotes, []);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('CLI: two shards each get their OWN distinct routed manifest/bundle — never leak into each other', () => {
+  // Both shards independently trigger routing for the same agent (test-adequacy-reviewer): each
+  // has a mix of a test file and a non-test file. The end-to-end regression this guards: shard A's
+  // routed manifest/bundle must never be attached to, or contain files from, shard B's aspect —
+  // `written[i]` is indexed per shard, and this proves that indexing never crosses over on disk.
+  const dir = mkdtempSync(join(tmpdir(), 'build-args-tworoute-'));
+  try {
+    const filesA = ['src/a/Widget.js', 'src/a/Widget.test.js'];
+    const filesB = ['src/b/Gadget.js', 'src/b/Gadget.test.js'];
+    writeFileSync(join(dir, 'plan.json'), JSON.stringify({
+      tier: 'standard', fileCount: 4, files: [...filesA, ...filesB],
+      shards: [{ label: 'a', files: filesA }, { label: 'b', files: filesB }],
+      dimensionAgents: { D5: 'test-adequacy-reviewer' },
+    }));
+    writeFileSync(join(dir, 'diff.txt'), [...filesA, ...filesB].map((f) =>
+      `diff --git a/${f} b/${f}\n--- a/${f}\n+++ b/${f}\n@@ -1 +1,2 @@\n-a\n+b\n+c\n`).join(''));
+    const r = spawnSync(process.execPath, [SCRIPT, '--dir', dir], { encoding: 'utf8' });
+    assert.equal(r.status, 0, r.stderr);
+    const a = JSON.parse(r.stdout);
+
+    const [shardA, shardB] = a.shards;
+    const routedA = shardA.routed?.['test-adequacy-reviewer'];
+    const routedB = shardB.routed?.['test-adequacy-reviewer'];
+    assert.ok(routedA, 'shard A should get its own routed entry');
+    assert.ok(routedB, 'shard B should get its own routed entry');
+
+    // distinct on-disk paths — shard A and shard B never share a manifest or bundle part
+    assert.notEqual(routedA.manifest, routedB.manifest);
+    assert.notEqual(routedA.parts[0], routedB.parts[0]);
+
+    // shard A's routed manifest carries ONLY shard A's test file, never shard B's
+    const manifestA = readFileSync(routedA.manifest, 'utf8');
+    assert.match(manifestA, /Widget\.test\.js/);
+    assert.doesNotMatch(manifestA, /Gadget/);
+
+    // shard B's routed manifest carries ONLY shard B's test file, never shard A's
+    const manifestB = readFileSync(routedB.manifest, 'utf8');
+    assert.match(manifestB, /Gadget\.test\.js/);
+    assert.doesNotMatch(manifestB, /Widget/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('CLI: a routed-manifest write failure degrades to no `.routed` field, never crashes the build', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'build-args-routedfail-'));
+  try {
+    const files = ['src/app/UserRepository.java', 'src/app/Widget.js'];
+    writeFileSync(join(dir, 'plan.json'), JSON.stringify({
+      tier: 'standard', fileCount: files.length, files,
+      // D6 alone: it must actually narrow (and thus attempt the write below) for this test to
+      // exercise a real EISDIR failure — D6+D8 together would stay full-scope and skip the write.
+      shards: [{ label: 'src', files }],
+      dimensionAgents: { D6: 'data-store-reviewer' },
+    }));
+    writeFileSync(join(dir, 'diff.txt'), files.map((f) =>
+      `diff --git a/${f} b/${f}\n--- a/${f}\n+++ b/${f}\n@@ -1 +1,2 @@\n-a\n+b\n+c\n`).join(''));
+    // Occupy the exact path build-args would write the routed manifest to, with a DIRECTORY instead
+    // of a file, so writeFileSync throws EISDIR — a genuine fs failure, not a stub.
+    mkdirSync(join(dir, 'manifests', '0-src-data-store-reviewer.files'), { recursive: true });
+    const r = spawnSync(process.execPath, [SCRIPT, '--dir', dir], { encoding: 'utf8' });
+    assert.equal(r.status, 0, r.stderr);
+    const a = JSON.parse(r.stdout);
+
+    // the shard's OWN manifest/bundle still wrote fine — untouched by the routed-step failure
+    assert.equal(a.shards[0].manifest, join(dir, 'manifests', '0-src.files'));
+    assert.equal(a.shards[0].routed, undefined);   // routed write failed — degrade, no crash
+    // Fix 6: the note is qualified ("some reviewers"), not an unqualified "reviewers fall back" —
+    // a mid-loop failure only strands the shards/agents not yet processed when it threw.
+    assert.match(a.buildNotes.join(' '), /routed manifests not written.*some reviewers may fall back to full-shard scope/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('CLI: dimension routing narrows nothing (and raises no note) when routing.enabled is false', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'build-args-routingoff-'));
+  try {
+    const files = ['src/app/UserRepository.java', 'src/app/UserController.java', 'src/app/UserService.test.js'];
+    writeFileSync(join(dir, 'plan.json'), JSON.stringify({
+      tier: 'standard', fileCount: files.length, files,
+      shards: [{ label: 'src', files }],
+      dimensionAgents: { D5: 'test-adequacy-reviewer', D6: 'data-store-reviewer' },
+      routing: { enabled: false },
+    }));
+    writeFileSync(join(dir, 'diff.txt'), files.map((f) =>
+      `diff --git a/${f} b/${f}\n--- a/${f}\n+++ b/${f}\n@@ -1 +1,2 @@\n-a\n+b\n+c\n`).join(''));
+    const r = spawnSync(process.execPath, [SCRIPT, '--dir', dir], { encoding: 'utf8' });
+    assert.equal(r.status, 0, r.stderr);
+    const a = JSON.parse(r.stdout);
+    assert.equal(a.shards[0].routed, undefined);   // the whole step was skipped, not just left empty
+    assert.deepEqual(a.buildNotes, []);            // no misleading "narrowed" note for a disabled mechanism
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('CLI: an EMPTY context.txt is reported as a note, not silently dropped', () => {
   const dir = mkdtempSync(join(tmpdir(), 'build-args-pack-'));
   try {
@@ -367,6 +554,51 @@ test('CLI: an EMPTY context.txt is reported as a note, not silently dropped', ()
     assert.equal(a.contextPackPath, null);          // still degrades — reviewers fall back to Read/Grep
     assert.equal(a.buildNotes.length, 1);           // ...but the user is told
     assert.match(a.buildNotes[0], /context pack .* EMPTY/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('CLI: a populated context/ dir is attached as contextDir; missing/empty degrades to null with no note', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'build-args-ctxdir-'));
+  try {
+    writeFileSync(join(dir, 'plan.json'), '{"tier":"standard","shards":[{"label":"all","files":["a.js"]}]}');
+    writeFileSync(join(dir, 'diff.txt'), 'diff --git a/a.js b/a.js\n--- a/a.js\n+++ b/a.js\n@@ -1 +1,2 @@\n-a\n+b\n');
+    // no context/ dir at all yet — an older run / the pre-step didn't write fragments
+    let r = spawnSync(process.execPath, [SCRIPT, '--dir', dir], { encoding: 'utf8' });
+    assert.equal(r.status, 0, r.stderr);
+    let a = JSON.parse(r.stdout);
+    assert.equal(a.contextDir, null);
+    assert.deepEqual(a.buildNotes, []);   // absence is normal, not a degrade worth a note
+
+    // an empty context/ dir (context-pack.mjs ran but wrote nothing) is treated the same way
+    mkdirSync(join(dir, 'context'));
+    r = spawnSync(process.execPath, [SCRIPT, '--dir', dir], { encoding: 'utf8' });
+    assert.equal(r.status, 0, r.stderr);
+    a = JSON.parse(r.stdout);
+    assert.equal(a.contextDir, null);
+    assert.deepEqual(a.buildNotes, []);
+
+    // a populated context/ dir is attached by its absolute path
+    writeFileSync(join(dir, 'context', 'abc123.patch'), 'FILE: a.js\n1| a\n');
+    r = spawnSync(process.execPath, [SCRIPT, '--dir', dir], { encoding: 'utf8' });
+    assert.equal(r.status, 0, r.stderr);
+    a = JSON.parse(r.stdout);
+    assert.equal(a.contextDir, join(dir, 'context'));
+    assert.deepEqual(a.buildNotes, []);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('CLI: a context path that collides with a plain file degrades contextDir to null with a note', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'build-args-ctxdir-blocked-'));
+  try {
+    writeFileSync(join(dir, 'plan.json'), '{"tier":"standard","shards":[{"label":"all","files":["a.js"]}]}');
+    writeFileSync(join(dir, 'diff.txt'), 'diff --git a/a.js b/a.js\n');
+    writeFileSync(join(dir, 'context'), 'not a directory');   // occupies the path build-args expects as a dir
+    const r = spawnSync(process.execPath, [SCRIPT, '--dir', dir], { encoding: 'utf8' });
+    assert.equal(r.status, 0, r.stderr);
+    const a = JSON.parse(r.stdout);
+    assert.equal(a.contextDir, null);
+    assert.equal(a.buildNotes.length, 1);
+    assert.match(a.buildNotes[0], /context fragments dir unreadable/);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 

@@ -106,6 +106,18 @@
       },
       "additionalProperties": false
     },
+    "mega_pr": {
+      "type": "object",
+      "description": "Two-stage funnel (#10) for a change far beyond large_diff.max_review_files. Below `threshold`, this is a no-op — selectReviewFiles's blunt cap behaves exactly as before. Above it, every risk-path file and every file not part of a qualifying 'mechanical cluster' (files sharing a top-level directory + extension, at least cluster_min of them, with per-file LOC churn all within churn_tolerance of the cluster's median) is reviewed in full; each mechanical cluster is instead deterministically sampled (always including its highest-churn file). Heuristic, not a diff-similarity proof — a conservative first cut for mega-PRs (300+ files) with no prior precedent in this codebase.",
+      "properties": {
+        "threshold": { "type": "integer", "minimum": 1, "description": "File count above which the funnel engages instead of selectReviewFiles's blind cap. Default 250 — deliberately higher than max_review_files' default (200) so this never fires for a change today's existing cap would already have fully covered." },
+        "cluster_min": { "type": "integer", "minimum": 1, "description": "Minimum files in a (top-dir, extension) group for it to be considered for sampling at all; smaller groups stay fully hot. Default 8." },
+        "churn_tolerance": { "type": "number", "minimum": 0, "description": "Fractional tolerance (default 0.3 = ±30%) around a group's median per-file LOC churn; any file outside the band disqualifies the whole group from being treated as mechanical." },
+        "sample_rate": { "type": "number", "minimum": 0, "maximum": 1, "description": "Fraction of a qualifying mechanical cluster to sample (default 0.15), subject to cluster_min_sample as a floor." },
+        "cluster_min_sample": { "type": "integer", "minimum": 1, "description": "Minimum files sampled from a qualifying mechanical cluster regardless of sample_rate. Default 3." }
+      },
+      "additionalProperties": false
+    },
     "diff_scope": {
       "type": "object",
       "description": "Diff-scope demotion: a finding anchored more than `slack` lines outside the changed hunks (on a changed file) is demoted to an advisory 'Out-of-scope observations' section — excluded from the verdict, gate, and --comment. Findings on unchanged files are always demoted; line-less findings on changed files are never demoted.",
@@ -150,6 +162,14 @@
         "defer_below": { "type": "string", "enum": ["low", "standard", "high", "critical"], "description": "Tier floor for defer_dims (default \"high\"): below this tier the deferred dimensions are dropped even if their signal fires." },
         "max_added": { "type": "integer", "minimum": 0, "description": "Cap on the number of content-gated specialists added beyond the tier's base set (default: uncapped). When exceeded, the lowest-priority dimensions are dropped (priority: security/data > correctness > contract/deps/advisory)." },
         "keep_order": { "type": "array", "items": { "type": "string" }, "description": "Override the drop-priority ranking for max_added (dims listed earlier are kept first)." }
+      },
+      "additionalProperties": false
+    },
+    "routing": {
+      "type": "object",
+      "description": "Dimension-scoped bundles (#9): narrows a reviewer's file scope to the subset matching its dimension's own file-path signal (test files for D5, migration/repository files for D6, contract files for D10) when every dim it covers is independently routable — otherwise (or when a subset match is empty) it keeps full shard scope. Off-switch for the whole mechanism, mirroring large_diff/mega_pr/fanout's own gate precedent.",
+      "properties": {
+        "enabled": { "type": "boolean", "description": "Master switch (default true). Set false to disable the narrowing entirely — every aspect reviews its full shard, as if no dimension were independently routable." }
       },
       "additionalProperties": false
     },

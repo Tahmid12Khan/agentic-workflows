@@ -8,6 +8,8 @@ import { mkdtempSync, existsSync, readFileSync, rmSync, readdirSync, mkdirSync, 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { sliceName } from '../lib/trim-diff.mjs';
+import { selectReviewFiles } from '../lib/shard.mjs';
 
 const REPORT = new URL('../lib/report.mjs', import.meta.url).pathname;
 
@@ -175,6 +177,46 @@ test('context-pack.mjs --stats-out writes the same stats as JSON, without touchi
     assert.equal(stats.files, 1);
     assert.ok(stats.callerHits > 0);             // caller.mjs references add() (import line + call site)
     assert.ok(stats.sizeBytes > 0);
+  } finally { rmSync(repo, { recursive: true, force: true }); }
+});
+
+test('context-pack.mjs --context-dir writes one fragment per file, named via sliceName, matching its pack section', () => {
+  const repo = mkdtempSync(join(tmpdir(), 'acr-ctx-fragdir-'));
+  const git = (...a) => execFileSync('git', a, { cwd: repo, stdio: ['pipe', 'pipe', 'pipe'] });
+  try {
+    git('init', '-q');
+    git('config', 'user.email', 't@t'); git('config', 'user.name', 't');
+    writeFileSync(join(repo, 'math.mjs'), 'export function add(a, b) {\n  return a + b;\n}\n');
+    writeFileSync(join(repo, 'caller.mjs'), "import { add } from './math.mjs';\nconsole.log(add(1, 2));\n");
+    git('add', '-A'); git('commit', '-qm', 'init');
+    writeFileSync(join(repo, 'math.mjs'), 'export function add(a, b) {\n  const s = a + b;\n  return s;\n}\n');
+    writeFileSync(join(repo, 'diff.txt'), execFileSync('git', ['diff'], { cwd: repo, encoding: 'utf8' }));
+    const ctxDir = join(repo, 'context');
+    const out = execFileSync(node, [join(LIB, 'context-pack.mjs'), '--diff', join(repo, 'diff.txt'), '--context-dir', ctxDir], { cwd: repo, encoding: 'utf8' });
+    assert.match(out, /CONTEXT PACK/);   // stdout still holds the whole pack, unaffected
+    const files = readdirSync(ctxDir);
+    assert.equal(files.length, 1);       // only math.mjs has new-side content (caller.mjs is unchanged)
+    assert.equal(files[0], sliceName('math.mjs'));   // same derivation as that file's diff slice
+    const fragment = readFileSync(join(ctxDir, files[0]), 'utf8');
+    assert.match(fragment, /===== FILE: math\.mjs =====/);
+    assert.match(fragment, /const s = a \+ b;/);
+    assert.ok(out.includes(fragment), 'the fragment must be verbatim inside the whole pack');
+  } finally { rmSync(repo, { recursive: true, force: true }); }
+});
+
+test('context-pack.mjs --context-dir failure degrades silently (pack still reaches stdout, no crash)', () => {
+  const repo = mkdtempSync(join(tmpdir(), 'acr-ctx-fragdir-bad-'));
+  const git = (...a) => execFileSync('git', a, { cwd: repo, stdio: ['pipe', 'pipe', 'pipe'] });
+  try {
+    git('init', '-q');
+    git('config', 'user.email', 't@t'); git('config', 'user.name', 't');
+    writeFileSync(join(repo, 'math.mjs'), 'export function add(a, b) {\n  return a + b;\n}\n');
+    git('add', '-A'); git('commit', '-qm', 'init');
+    writeFileSync(join(repo, 'math.mjs'), 'export function add(a, b) {\n  return a - b;\n}\n');
+    writeFileSync(join(repo, 'diff.txt'), execFileSync('git', ['diff'], { cwd: repo, encoding: 'utf8' }));
+    writeFileSync(join(repo, 'blocked'), 'not a directory');   // occupies the path --context-dir needs as a dir
+    const out = execFileSync(node, [join(LIB, 'context-pack.mjs'), '--diff', join(repo, 'diff.txt'), '--context-dir', join(repo, 'blocked')], { cwd: repo, encoding: 'utf8' });
+    assert.match(out, /CONTEXT PACK/);   // the whole pack still reaches stdout despite the fragment-write failure
   } finally { rmSync(repo, { recursive: true, force: true }); }
 });
 
@@ -509,6 +551,86 @@ test('plan.mjs --incremental narrows to prevHead..head on a fast-forward, falls 
     assert.equal(reb.range, `${base}..${newHead}`, 'full base..head range on a rebase');
     assert.match(reb.incremental.reason, /non-fast-forward/i);
   } finally { rmSync(repo, { recursive: true, force: true }); }
+});
+
+// Builds a throwaway repo with a base commit + a second commit adding `files` (path -> content),
+// then runs plan.mjs against base..head. Shared by the mega-PR funnel (#10) wiring tests below.
+function planForFiles(files, { config } = {}) {
+  const repo = mkdtempSync(join(tmpdir(), 'acr-funnel-'));
+  const g = (...a) => execFileSync('git', a, { cwd: repo, stdio: ['pipe', 'pipe', 'pipe'] }).toString();
+  try {
+    g('init', '-q');
+    g('config', 'user.email', 't@t'); g('config', 'user.name', 't');
+    writeFileSync(join(repo, 'README.md'), 'base\n');
+    g('add', '-A'); g('commit', '-qm', 'base');
+    const base = g('rev-parse', 'HEAD').trim();
+    for (const [path, content] of Object.entries(files)) {
+      mkdirSync(join(repo, path, '..'), { recursive: true });
+      writeFileSync(join(repo, path), content);
+    }
+    g('add', '-A'); g('commit', '-qm', 'mega');
+    // config.json is read straight off disk by plan.mjs (not from git) — write it AFTER the commit
+    // and leave it untracked, so it never inflates the base..head diff being tested.
+    if (config) {
+      mkdirSync(join(repo, '.adversarial-code-review'), { recursive: true });
+      writeFileSync(join(repo, '.adversarial-code-review', 'config.json'), JSON.stringify(config));
+    }
+    return JSON.parse(run('plan.mjs', ['--base', base], { cwd: repo }));
+  } finally { rmSync(repo, { recursive: true, force: true }); }
+}
+
+test('plan.mjs: routing.enabled defaults to true, and an explicit false is carried through the plan', () => {
+  const files = { 'src/a.js': 'x\n' };
+  const on = planForFiles(files);
+  assert.equal(on.routing.enabled, true, 'default (no config.routing at all) must be enabled');
+  const off = planForFiles(files, { config: { routing: { enabled: false } } });
+  assert.equal(off.routing.enabled, false);
+});
+
+test('plan.mjs: below mega_pr.threshold, file selection is byte-for-byte the same as selectReviewFiles alone (regression)', () => {
+  const files = {
+    'src/util/small.js': 'x\n'.repeat(2), 'src/auth/login.js': 'x\n'.repeat(1),
+    'src/util/big.js': 'x\n'.repeat(90), 'src/util/mid.js': 'x\n'.repeat(40), 'src/util/tiny.js': 'x\n'.repeat(1),
+  };
+  const out = planForFiles(files, { config: { large_diff: { max_review_files: 3 } } });
+  assert.equal(out.filesFunneled, null, 'below threshold: the funnel must never engage');
+  const expected = selectReviewFiles(Object.keys(files), {
+    max: 3, riskPaths: out.signals.riskPaths,
+    locByFile: new Map(Object.entries(files).map(([p, c]) => [p, c.split('\n').length - 1])),
+  });
+  assert.deepEqual(out.files, expected.files);
+  assert.deepEqual(out.filesCapped, expected.capped);
+});
+
+test('plan.mjs: above mega_pr.threshold, the funnel engages — hot files kept, mechanical cluster sampled', () => {
+  const files = {};
+  for (let i = 0; i < 250; i++) files[`gen/f${i}.py`] = 'x\n'.repeat(10);       // one uniform-churn mechanical cluster
+  for (let i = 0; i < 10; i++) files[`svc${i}/main.go`] = 'x\n'.repeat(3);      // 10 distinct dirs — never cluster, always hot
+  const out = planForFiles(files);
+  assert.ok(out.filesFunneled, 'above threshold: the funnel must engage');
+  assert.equal(out.filesFunneled.threshold, 250);
+  assert.equal(out.filesFunneled.hot, 10);
+  assert.equal(out.filesFunneled.mechanicalClusters, 1);
+  assert.equal(out.filesFunneled.mechanicalTotal, 250);
+  assert.equal(out.filesFunneled.sampled, 38);           // max(3, ceil(250*0.15)) = 38
+  assert.equal(out.filesFunneled.skippedTotal, 212);
+  assert.equal(out.files.length, 48);                    // 10 hot + 38 sampled, under max_review_files(200) → no further cap
+  assert.equal(out.filesCapped, null);
+  for (let i = 0; i < 10; i++) assert.ok(out.files.includes(`svc${i}/main.go`), 'every hot file is reviewed');
+  assert.match(out.diffSummary, /funneled/);
+});
+
+test('plan.mjs: funnel output is still bounded by max_review_files (belt-and-braces)', () => {
+  const files = {};
+  for (let i = 0; i < 250; i++) files[`gen/f${i}.py`] = 'x\n'.repeat(10);
+  for (let i = 0; i < 10; i++) files[`svc${i}/main.go`] = 'x\n'.repeat(3);
+  // funnel narrows 260 files to 48 (see test above); force max_review_files below that so the
+  // pre-existing cap still has to run a second time on the funnel's OUTPUT.
+  const out = planForFiles(files, { config: { large_diff: { max_review_files: 10 } } });
+  assert.ok(out.filesFunneled, 'funnel still engages first');
+  assert.ok(out.filesCapped, 'and the existing ceiling still bounds its output');
+  assert.equal(out.files.length, 10);
+  assert.equal(out.filesCapped.total, 48);   // capped from the funnel's 48, not the raw 260
 });
 
 test('report.mjs script-writes last-review.json and marks new findings under --incremental (S9)', () => {
