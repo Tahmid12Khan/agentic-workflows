@@ -6,7 +6,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync, readFileSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { buildArgs, mergeEnrich, knownFalsePositives, rangesBySliceName, sliceNameCollision, manifestText, manifestName, contextPackNote } from '../lib/build-args.mjs';
+import { buildArgs, mergeEnrich, knownFalsePositives, rangesBySliceName, sliceNameCollision, manifestText, manifestName, bundleParts, contextPackNote } from '../lib/build-args.mjs';
 import { sliceName } from '../lib/trim-diff.mjs';
 
 const SCRIPT = new URL('../lib/build-args.mjs', import.meta.url).pathname;
@@ -26,11 +26,12 @@ test('buildArgs: emits exactly the keys review-workflow.mjs destructures', () =>
     meta: { flags: { gate: true }, startedAt: 'T', prNumber: 7, checkout: null },
   });
   assert.deepEqual(Object.keys(out).sort(),
-    ['allManifest', 'buildNotes', 'bundle', 'checkout', 'contextPackPath', 'contextPackStats', 'diffIndex', 'diffPath', 'diffRanges', 'doctrinePaths', 'flags', 'historyPath', 'knownFalsePositives', 'plan', 'prNumber', 'routing', 'shards', 'sliceDir', 'startedAt', 'testSignal'].sort());
+    ['allManifest', 'allParts', 'buildNotes', 'bundle', 'checkout', 'contextPackPath', 'contextPackStats', 'diffIndex', 'diffPath', 'diffRanges', 'doctrineText', 'flags', 'historyPath', 'knownFalsePositives', 'plan', 'prNumber', 'routing', 'shards', 'sliceDir', 'startedAt', 'testSignal'].sort());
   assert.equal(out.allManifest, null);      // no manifest written → the workflow falls back to inline shard files
+  assert.equal(out.allParts, null);         // no bundle written → D3/intent fall back to the bare diffRead
   assert.deepEqual(out.buildNotes, []);     // nothing degraded → no seeded note (the common case, zero cost)
   assert.equal(out.sliceDir, null);   // absent → null so the workflow falls back to the full diff (no slicing)
-  assert.deepEqual(out.doctrinePaths, {});   // WS1: absent → {} so the workflow attaches no doctrine
+  assert.deepEqual(out.doctrineText, {});   // WS1: absent → {} so the workflow attaches no doctrine
   assert.deepEqual(out.shards, [{ label: 'all', files: ['a.js'] }]); // lifted from plan
   assert.deepEqual(out.routing, { scrutiny: { foo: 1 }, checks: { bar: 2 } });
   assert.equal(out.prNumber, 7);
@@ -195,6 +196,76 @@ test('manifestName: filesystem-safe and collision-free across merged shard label
   assert.equal(manifestName(null, 3), '3-shard.files');
 });
 
+test('bundleParts: concatenates every file into one part when it fits', () => {
+  const byFile = { 'a.js': '-x\n+y\n', 'b.js': '-p\n+q\n' };
+  const parts = bundleParts(['a.js', 'b.js'], byFile);
+  assert.equal(parts.length, 1);
+  assert.equal(parts[0], '=== FILE: a.js ===\n-x\n+y\n=== FILE: b.js ===\n-p\n+q\n');
+});
+
+test('bundleParts: empty input returns []', () => {
+  assert.deepEqual(bundleParts([], {}), []);
+  assert.deepEqual(bundleParts(undefined, {}), []);
+});
+
+test('bundleParts: a file absent from byFile gets the placeholder text', () => {
+  const parts = bundleParts(['renamed.js'], {});
+  assert.equal(parts.length, 1);
+  assert.match(parts[0], /=== FILE: renamed\.js ===\n\(no textual hunks for renamed\.js — rename, mode change, or binary\)\n/);
+});
+
+test('bundleParts: splits into 2+ parts at the line cap, never dividing one file', () => {
+  const byFile = {
+    'a.js': Array.from({ length: 10 }, (_, i) => `+line${i}`).join('\n') + '\n',
+    'b.js': Array.from({ length: 10 }, (_, i) => `+line${i}`).join('\n') + '\n',
+  };
+  // each chunk (header + 11 lines) is ~12 lines; cap at 15 forces a's chunk and b's chunk apart
+  const parts = bundleParts(['a.js', 'b.js'], byFile, { maxLines: 15 });
+  assert.equal(parts.length, 2);
+  assert.match(parts[0], /=== FILE: a\.js ===/);
+  assert.doesNotMatch(parts[0], /=== FILE: b\.js ===/);
+  assert.match(parts[1], /=== FILE: b\.js ===/);
+  assert.doesNotMatch(parts[1], /=== FILE: a\.js ===/);
+});
+
+test('bundleParts: splits at the byte cap too', () => {
+  const big = 'x'.repeat(100);
+  const byFile = { 'a.js': big + '\n', 'b.js': big + '\n' };
+  const parts = bundleParts(['a.js', 'b.js'], byFile, { maxBytes: 150 });
+  assert.equal(parts.length, 2);
+});
+
+test('bundleParts: a single oversized file becomes its own oversized part, never split', () => {
+  const huge = Array.from({ length: 5000 }, (_, i) => `+line${i}`).join('\n') + '\n';
+  const byFile = { 'huge.js': huge, 'small.js': '+x\n' };
+  const parts = bundleParts(['huge.js', 'small.js'], byFile, { maxLines: 1800 });
+  assert.equal(parts.length, 2);   // huge.js alone exceeds the cap → its own part; small.js gets the next
+  assert.match(parts[0], /=== FILE: huge\.js ===/);
+  assert.doesNotMatch(parts[0], /=== FILE: small\.js ===/);
+  assert.match(parts[1], /=== FILE: small\.js ===/);
+});
+
+test('bundleParts: defaults are sized to actually fit under the real Read-tool limit', () => {
+  // Verified empirically (this session): Read truncates around ~25,000 tokens per call — a
+  // 134,420-byte/1,061-line file came back as only 100 lines with a "cap 25000" notice. The old
+  // defaults (1,800 lines / 200KB) were 2-3x over that on real diff content; 800 lines / 60KB
+  // leaves margin. Assert the actual default VALUES (not an explicit override) by choosing inputs
+  // that fit under the OLD default but must split under the NEW one.
+  const fiveHundredLines = (n) => Array.from({ length: 500 }, (_, i) => `+line${i}${n}`).join('\n') + '\n';
+  const byFile = { 'a.js': fiveHundredLines('a'), 'b.js': fiveHundredLines('b') };
+  // two 500-line files (~1,002 lines with headers) fit in ONE part under the old 1,800-line default,
+  // but must SPLIT under the corrected ~800-line default.
+  const parts = bundleParts(['a.js', 'b.js'], byFile);
+  assert.equal(parts.length, 2);
+
+  const sixtyKb = 'x'.repeat(45_000);
+  const byBytes = { 'a.js': sixtyKb + '\n', 'b.js': sixtyKb + '\n' };
+  // two ~45KB files (~90KB total) fit in ONE part under the old 200KB default, but must SPLIT under
+  // the corrected ~60KB default.
+  const byteParts = bundleParts(['a.js', 'b.js'], byBytes);
+  assert.equal(byteParts.length, 2);
+});
+
 test('contextPackNote: an EMPTY pack degrades to a note, an absent one is silent', () => {
   // context-pack.mjs wrote a zero-byte file → build-args reads null → without a note the report
   // would look identical to a healthy run that simply had no pack (golden rule 3).
@@ -218,9 +289,9 @@ test('CLI: writes per-shard manifests and keeps every reviewed path OUT of args'
     assert.equal(r.status, 0, r.stderr);
     const a = JSON.parse(r.stdout);
 
-    // shards carry a label + count + manifest PATH — never the file list
+    // shards carry a label + count + manifest PATH + bundle-part paths — never the file list
     assert.equal(a.shards.length, 1);
-    assert.deepEqual(Object.keys(a.shards[0]).sort(), ['count', 'label', 'manifest']);
+    assert.deepEqual(Object.keys(a.shards[0]).sort(), ['count', 'label', 'manifest', 'parts']);
     assert.equal(a.shards[0].count, 3);
     assert.equal(a.shards[0].manifest, join(dir, 'manifests', '0-src.files'));
     assert.equal(a.allManifest, join(dir, 'manifests', 'all.files'));
@@ -232,11 +303,55 @@ test('CLI: writes per-shard manifests and keeps every reviewed path OUT of args'
     assert.equal(path0, 'src/a.js');
     assert.match(readFileSync(slice0, 'utf8'), /\+c/);
 
+    // the shard's bundle part(s) concatenate every file's slice content, one part here (small fixture)
+    assert.equal(a.shards[0].parts.length, 1);
+    const bundleText = readFileSync(a.shards[0].parts[0], 'utf8');
+    for (const f of files) assert.match(bundleText, new RegExp(`=== FILE: ${f.replace(/\./g, '\\.')} ===`));
+    // the all-files bundle covers the whole reviewed set too
+    assert.equal(a.allParts.length, 1);
+    assert.match(readFileSync(a.allParts[0], 'utf8'), /=== FILE: src\/a\.js ===/);
+
     // THE POINT: no reviewed path survives anywhere in the emitted args blob
     const blob = JSON.stringify(a);
     for (const f of files) assert.equal(blob.includes(f), false, `${f} must not be inlined into args`);
     assert.equal(a.plan.files, undefined);    // stripped from the embedded plan too
     assert.equal(a.plan.shards, undefined);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('CLI: a bundle-write failure leaves manifests intact, only nulls parts/allParts', () => {
+  // Fix 5: manifests and bundles are now separate try/catch blocks so a bundle-only failure (bundles
+  // write ~3x the bytes manifests do, so they are the more likely failure point) does not discard
+  // manifests that already wrote fine. Simulate a bundle-write failure WITHOUT mocking fs: pre-create
+  // a regular FILE at the exact path build-args.mjs will mkdirSync('bundles') into, so that call
+  // throws EEXIST — a genuine fs failure, not a stub.
+  const dir = mkdtempSync(join(tmpdir(), 'build-args-bundlefail-'));
+  try {
+    const files = ['src/a.js', 'src/b.js'];
+    writeFileSync(join(dir, 'plan.json'), JSON.stringify({
+      tier: 'standard', fileCount: 2, files,
+      shards: [{ label: 'src', files }],
+    }));
+    writeFileSync(join(dir, 'diff.txt'), files.map((f) =>
+      `diff --git a/${f} b/${f}\n--- a/${f}\n+++ b/${f}\n@@ -1 +1,2 @@\n-a\n+b\n+c\n`).join(''));
+    writeFileSync(join(dir, 'bundles'), 'not a directory');   // occupies the path build-args needs as a dir
+    const r = spawnSync(process.execPath, [SCRIPT, '--dir', dir], { encoding: 'utf8' });
+    assert.equal(r.status, 0, r.stderr);
+    const a = JSON.parse(r.stdout);
+
+    // manifests wrote fine — shardsOut/allManifest are non-null, exactly as the healthy-run test above
+    assert.equal(a.allManifest, join(dir, 'manifests', 'all.files'));
+    assert.equal(a.shards.length, 1);
+    assert.equal(a.shards[0].manifest, join(dir, 'manifests', '0-src.files'));
+    assert.equal(a.shards[0].count, 2);
+
+    // bundles did NOT write — parts/allParts are null, not partially populated
+    assert.equal(a.shards[0].parts, null);
+    assert.equal(a.allParts, null);
+
+    // the degrade is reported, and the note is bundle-specific (not misattributed to manifests)
+    assert.equal(a.buildNotes.length, 1);
+    assert.match(a.buildNotes[0], /bundle parts not written/);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
@@ -286,9 +401,9 @@ test('CLI: assembles from --dir and merges enrich.json onto bundle', () => {
     // carries the directory once instead of one absolute path per file
     assert.equal(a.sliceDir, join(dir, 'slices'));
     assert.match(readFileSync(join(a.sliceDir, sliceName('a.js')), 'utf8'), /\+c/);   // the slice holds the file's hunks
-    // WS1: doctrine paths are resolved to absolute paths under agents/doctrine/ at tier >= standard
-    assert.ok(a.doctrinePaths['correctness-reviewer'], 'correctness-reviewer gets doctrine at standard tier');
-    assert.match(a.doctrinePaths['correctness-reviewer'][0], /\/agents\/doctrine\/[a-z-]+\.md$/);
+    // WS1: doctrine fragment TEXT is read and inlined at tier >= standard (not just a resolved path)
+    assert.ok(a.doctrineText['correctness-reviewer'], 'correctness-reviewer gets doctrine at standard tier');
+    assert.match(a.doctrineText['correctness-reviewer'], /Lead with leverage/);   // distinctive phrase from severity-norms.md
     assert.deepEqual(a.knownFalsePositives, []);   // no plan.learning.store configured → []
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });

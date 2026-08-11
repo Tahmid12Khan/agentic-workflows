@@ -8,8 +8,8 @@ test('expandAspects = agents × shards, dims carried as a list', () => {
     [{ label: 'A', files: ['a.ts'] }, { label: 'B', files: ['b.ts'] }],
   );
   assert.equal(aspects.length, 4);
-  // A shard with no `manifest` keeps the legacy inline shape; count is derived from the file list.
-  assert.deepEqual(aspects[0], { dims: ['D2'], agent: 'correctness-reviewer', shardId: 'A', files: ['a.ts'], manifest: null, count: 1 });
+  // A shard with no `manifest`/`parts` keeps the legacy inline shape; count is derived from the file list.
+  assert.deepEqual(aspects[0], { dims: ['D2'], agent: 'correctness-reviewer', shardId: 'A', files: ['a.ts'], manifest: null, count: 1, parts: null });
 });
 
 test('expandAspects carries a shard manifest by reference instead of the file list', () => {
@@ -27,6 +27,31 @@ test('expandAspects carries a shard manifest by reference instead of the file li
   const d3 = aspects.find((x) => x.dims.includes('D3'));
   assert.equal(d3.manifest, '/s/manifests/all.files');
   assert.equal(d3.count, 15);
+});
+
+test('expandAspects threads bundle parts alongside manifest/allManifest', () => {
+  // Per-shard `parts` (build-args.mjs's bundleParts write) propagate to the shard's aspect...
+  const aspects = expandAspects(
+    { D2: 'correctness-reviewer', D3: 'vuln-reviewer' },
+    [
+      { label: 'A', count: 1, manifest: '/s/manifests/0-A.files', files: ['a.ts'], parts: ['/s/bundles/0-A-0.txt'] },
+      { label: 'B', count: 1, manifest: '/s/manifests/1-B.files', files: ['b.ts'], parts: ['/s/bundles/1-B-0.txt'] },
+    ],
+    { unsharded: ['D3'], allManifest: '/s/manifests/all.files', allParts: ['/s/bundles/all-0.txt', '/s/bundles/all-1.txt'] },
+  );
+  const a = aspects.find((x) => x.shardId === 'A' && x.agent === 'correctness-reviewer');
+  assert.deepEqual(a.parts, ['/s/bundles/0-A-0.txt']);
+  // ...and the unsharded (D3) aspect gets allParts instead of a shard's own parts.
+  const d3 = aspects.find((x) => x.dims.includes('D3'));
+  assert.deepEqual(d3.parts, ['/s/bundles/all-0.txt', '/s/bundles/all-1.txt']);
+});
+
+test('expandAspects: a shard with no `parts` (bundle-write failure) leaves it null', () => {
+  const aspects = expandAspects(
+    { D2: 'correctness-reviewer' },
+    [{ label: 'A', files: ['a.ts'] }],
+  );
+  assert.equal(aspects[0].parts, null);
 });
 
 test('expandAspects folds dims sharing an agent into ONE aspect (no duplicate agent per dim)', () => {
@@ -49,7 +74,7 @@ test('expandAspects collapses unsharded dims to one all-files aspect', () => {
   assert.equal(aspects.length, 3);
   const d3 = aspects.filter((a) => a.dims.includes('D3'));
   assert.equal(d3.length, 1);
-  assert.deepEqual(d3[0], { dims: ['D3'], agent: 'vuln-reviewer', shardId: 'all', files: ['a.ts', 'b.ts'], manifest: null, count: 2 });
+  assert.deepEqual(d3[0], { dims: ['D3'], agent: 'vuln-reviewer', shardId: 'all', files: ['a.ts', 'b.ts'], manifest: null, count: 2, parts: null });
   assert.equal(aspects.filter((a) => a.dims.includes('D2')).length, 2);
 });
 
@@ -118,6 +143,45 @@ test('review-workflow.mjs declares a valid meta with 4 phases', () => {
   // COST LEVER (slicing): reviewers/verifiers Read per-file diff slices via diffReadFor, not the whole diff.
   assert.match(src, /const diffReadFor = /, 'the per-file slice diff-read helper must exist');
   assert.match(src, /diffReadFor\(a\.files\)/, 'reviewers must read the slices for their files');
+  // COST LEVER (bundle parts, Task 1): scopeFor prefers a shard's pre-concatenated bundle parts —
+  // a handful of parallel Reads — over the per-slice manifest branch when parts are present.
+  assert.match(src, /const parts = a\.parts \?\? \[\];/, 'scopeFor must check a.parts before the manifest branch');
+  assert.match(src, /Read ALL of them now, /, 'scopeFor must instruct the reviewer to Read every bundle part');
+  assert.match(src, /in one batch of parallel Read calls/, 'scopeFor must call out that parallel Reads cost one turn');
+  assert.match(src, /=== FILE: <path> ===/, 'scopeFor must describe the bundle part boundary header');
+  // COST LEVER (bundle parts, Task 2): D3 (unsharded, cross-file taint) also prefers allParts over
+  // the bare full-diff Read, falling back to diffRead only when allParts is empty/null.
+  assert.match(src, /const allBundleParts = allParts \?\? \[\];/, 'scopeFor must check allParts for the D3 branch before falling back to the bare diff');
+  assert.match(src, /Review EVERY changed file across those parts for dimension\(s\) \$\{dimList\}\./, 'D3 with allParts must still review every changed file, across the bundle parts');
+  // COST LEVER (bundle parts, Task 4): intent-analyzer (global, single pass, no per-file slice)
+  // also prefers allParts over the bare full-diff Read, falling back to diffRead + the
+  // lockfile-churn caveat only when allParts is empty/null — same fallback shape as D3.
+  assert.match(src, /const intentParts = allParts \?\? \[\];/, 'intent must check allParts before falling back to the bare diff');
+  assert.match(src, /const intentDiffRead = intentParts\.length/, 'intent must branch its diff-read instruction on intentParts');
+  assert.match(src, /: `\$\{diffRead\} \(ignore lockfile\/build-artifact\/vendored churn/, 'intent must fall back to diffRead with the lockfile-churn caveat when allParts is empty');
+  assert.match(src, /`\$\{intentDiffRead\}\\n\\nIn ORDER:/, 'intent-analyzer prompt must use intentDiffRead');
+  // intent's read budget is capped once it has full bundle coverage (no maxTurns option exists on
+  // the Workflow harness's agent() call — the cap must be a prompt-text instruction). Fix 10: bumped
+  // 3 → 4 to match the dimension reviewers' "4 additional lookups" convention and to leave room for
+  // the PRIOR BUG HISTORY read (historyPrior) that may ride the same prompt without its own budget line.
+  assert.match(src, /cap any FURTHER Read\/Grep\/Bash calls at 4/, 'intent must cap further lookups at 4 (leaves room for a prior-history read)');
+  // Fix 1/11: the three bundle-read consumers (D3, sharded scopeFor, intent) share ONE helper
+  // instead of three near-identical literals, and that helper tells the agent to check for a
+  // truncation notice and page through with Read(offset=...) rather than trust the "complete
+  // coverage" claim at face value — real bundle parts can still trip the Read tool's per-call limit.
+  assert.match(src, /const bundleReadInstruction = \(parts, trailing\)/, 'the bundle-read instruction must be factored into one shared helper');
+  assert.match(src, /truncation notice/, 'the bundle-read instruction must warn about truncation');
+  assert.match(src, /Read\(offset=\.\.\.\)/, 'the bundle-read instruction must tell the agent to page through with Read(offset=...)');
+  // Fix 9: the parts branch (Task 1) must self-report a file count like the manifest branch already
+  // does (`${a.count ?? 0} file(s)`), so a reviewer can self-check it covered everything.
+  assert.match(src, /Review ONLY the files covered by those parts, for dimension\(s\) \$\{dimList\}: \$\{a\.count \?\? 0\} file\(s\)\./, 'the parts branch must report a.count like the manifest branch does');
+  // Fix 3: the triage-added dimension aspect must also get bundle parts (allParts), matching every
+  // other whole-change consumer (D3, intent) — previously it only carried `manifest`, which fell
+  // back to one Read per file instead of the bundle-parts treatment.
+  assert.match(src, /shardId: 'triage', files: \[\], manifest: allManifest, count: plan\.fileCount \?\? 0, parts: allParts/, 'the triage-extra aspect must carry allParts too');
+  // Fix 2: intentP must degrade like every other Intent-phase dispatch (see triageP above) instead
+  // of propagating uncaught through Promise.all([triageP, intentP]) on a very large PR.
+  assert.match(src, /\.catch\(\(e\) => \{ notes\.push\(`intent-analyzer failed: \$\{e\.message\}`\); return null; \}\);/, 'intentP must catch and degrade to a note + null, like triageP');
   // COST LEVER (sonnet-first verify): first-pass refuter groups run on modelFirst (sonnet), opus only for a critical group + the reverify guard.
   assert.match(src, /const firstModel = plan\.verify\?\.modelFirst/, 'batched verify must be sonnet-first via modelFirst');
   assert.match(src, /function intentBrief\(/, 'intentBrief must be inlined (canonical: lib/review-orchestration.mjs)');
