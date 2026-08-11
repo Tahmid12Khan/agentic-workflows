@@ -170,6 +170,52 @@ test('expandAspects: a shard label that happens to be "all" (singleShard\'s defa
   assert.equal(aspects[0].count, 1);
 });
 
+test('expandAspects: a shard with a precomputed routed[agent] entry uses it — the PRIMARY, production path', () => {
+  // The realistic production shape: build-args.mjs already wrote {label, count, manifest, parts}
+  // (no inline `files` — the sandbox never sees the real file list) PLUS a `routed` map it
+  // precomputed while it still held `s.files` in memory. This must win over the (here, inert)
+  // inline-narrowing fallback.
+  const shards = [{
+    label: 'src', count: 2, manifest: '/s/manifests/0-src.files', parts: ['/s/bundles/0-src-0.txt'],
+    files: [],
+    routed: {
+      'data-store-reviewer': {
+        manifest: '/s/manifests/0-src-data-store-reviewer.files',
+        parts: ['/s/bundles/0-src-data-store-reviewer-0.txt'],
+        count: 1,
+      },
+    },
+  }];
+  const aspects = expandAspects({ D6: 'data-store-reviewer', D8: 'data-store-reviewer' }, shards);
+  assert.equal(aspects.length, 1);
+  const a = aspects[0];
+  assert.equal(a.manifest, '/s/manifests/0-src-data-store-reviewer.files');
+  assert.deepEqual(a.parts, ['/s/bundles/0-src-data-store-reviewer-0.txt']);
+  assert.equal(a.count, 1);
+});
+
+test('expandAspects: a shard\'s routed map missing THIS agent falls back to inline-narrowing for it', () => {
+  // `routed` has an entry for data-store-reviewer only; the correctness-reviewer aspect on the
+  // SAME shard must fall back to the secondary path (here, staying full since it's unrouted) —
+  // one agent's routed entry must never leak into another agent's aspect.
+  const shards = [{
+    label: 'src', files: ['app/UserRepository.java', 'app/UserController.java'],
+    manifest: '/s/m.files', parts: ['/s/b-0.txt'],
+    routed: { 'data-store-reviewer': { manifest: '/s/m-ds.files', parts: ['/s/b-ds-0.txt'], count: 1 } },
+  }];
+  const aspects = expandAspects({ D1: 'correctness-reviewer' }, shards);
+  assert.equal(aspects[0].manifest, '/s/m.files');   // untouched — no routed entry for this agent
+  assert.deepEqual(aspects[0].parts, ['/s/b-0.txt']);
+});
+
+test('expandAspects: no `routed` field on the shard falls back to inline-narrowing (manifest-write-failure shape)', () => {
+  const shards = [{ label: 'src', files: ['app/UserRepository.java', 'app/UserController.java'], manifest: '/s/m.files', parts: ['/s/b-0.txt'] }];
+  const aspects = expandAspects({ D6: 'data-store-reviewer' }, shards);
+  assert.deepEqual(aspects[0].files, ['app/UserRepository.java']);
+  assert.equal(aspects[0].manifest, null);   // inline-narrowing fallback nulls it, same as before
+  assert.equal(aspects[0].count, 1);
+});
+
 test('findingKey is line-sensitive and title-normalized', () => {
   assert.equal(findingKey({ file: 'x.ts', line: 10, title: '  SQL Injection ' }), 'x.ts:10:sql injection');
   assert.notEqual(

@@ -362,6 +362,113 @@ test('CLI: a bundle-write failure leaves manifests intact, only nulls parts/allP
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
+test('CLI: writes a routed manifest/bundle for a shard whose dims are all independently routable', () => {
+  // Dimension-scoped bundles (#9), extended: build-args.mjs still holds the shard's real `files`
+  // at this point (before shards are stripped to {label, count, manifest, parts}), so it can
+  // precompute a NARROWER manifest/bundle per agent whose whole dim set is routable — this is the
+  // path that makes narrowing actually effective in production, where the sandboxed workflow never
+  // sees an inline file list to narrow itself.
+  const dir = mkdtempSync(join(tmpdir(), 'build-args-routed-'));
+  try {
+    const files = ['src/app/UserRepository.java', 'src/app/UserController.java', 'src/app/UserService.test.js'];
+    writeFileSync(join(dir, 'plan.json'), JSON.stringify({
+      tier: 'standard', fileCount: files.length, files,
+      shards: [{ label: 'src', files }],
+      dimensionAgents: {
+        D1: 'correctness-reviewer', D2: 'correctness-reviewer', D12: 'correctness-reviewer',
+        D5: 'test-adequacy-reviewer',
+        D6: 'data-store-reviewer', D8: 'data-store-reviewer',
+      },
+    }));
+    writeFileSync(join(dir, 'diff.txt'), files.map((f) =>
+      `diff --git a/${f} b/${f}\n--- a/${f}\n+++ b/${f}\n@@ -1 +1,2 @@\n-a\n+b\n+c\n`).join(''));
+    const r = spawnSync(process.execPath, [SCRIPT, '--dir', dir], { encoding: 'utf8' });
+    assert.equal(r.status, 0, r.stderr);
+    const a = JSON.parse(r.stdout);
+
+    const shard = a.shards[0];
+    assert.ok(shard.routed, 'shard should carry a routed map');
+
+    // data-store-reviewer (D6+D8, folded) narrows to just the Repository file
+    const ds = shard.routed['data-store-reviewer'];
+    assert.ok(ds, 'data-store-reviewer should get a routed entry');
+    assert.equal(ds.count, 1);
+    const dsLines = readFileSync(ds.manifest, 'utf8').split('\n').filter(Boolean);
+    assert.equal(dsLines.length, 1);
+    assert.match(dsLines[0], /UserRepository\.java/);
+    assert.match(readFileSync(ds.parts[0], 'utf8'), /UserRepository\.java/);
+
+    // test-adequacy-reviewer (D5) narrows to just the test file
+    const ta = shard.routed['test-adequacy-reviewer'];
+    assert.ok(ta, 'test-adequacy-reviewer should get a routed entry');
+    assert.equal(ta.count, 1);
+    assert.match(readFileSync(ta.manifest, 'utf8'), /UserService\.test\.js/);
+
+    // correctness-reviewer (D1/D2/D12, always full-scope) gets NO routed entry at all
+    assert.equal(shard.routed['correctness-reviewer'], undefined);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('CLI: a shard where nothing narrows produces no `routed` entries at all', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'build-args-noroute-'));
+  try {
+    const files = ['src/app/Widget.js', 'src/app/Gadget.js'];   // no test/data/contract files among them
+    writeFileSync(join(dir, 'plan.json'), JSON.stringify({
+      tier: 'standard', fileCount: files.length, files,
+      shards: [{ label: 'src', files }],
+      dimensionAgents: { D5: 'test-adequacy-reviewer', D6: 'data-store-reviewer', D8: 'data-store-reviewer' },
+    }));
+    writeFileSync(join(dir, 'diff.txt'), files.map((f) =>
+      `diff --git a/${f} b/${f}\n--- a/${f}\n+++ b/${f}\n@@ -1 +1,2 @@\n-a\n+b\n+c\n`).join(''));
+    const r = spawnSync(process.execPath, [SCRIPT, '--dir', dir], { encoding: 'utf8' });
+    assert.equal(r.status, 0, r.stderr);
+    const a = JSON.parse(r.stdout);
+    assert.equal(a.shards[0].routed, undefined);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('CLI: a run with no dimensionAgents at all skips routed-writing entirely (no spurious note)', () => {
+  // Regression guard: an earlier version of this step unconditionally mkdirSync'd the
+  // manifests/bundles dirs even with nothing to route, which could raise a note over an unrelated
+  // fs condition in a directory this step had no actual reason to touch this run.
+  const dir = mkdtempSync(join(tmpdir(), 'build-args-noagents-'));
+  try {
+    const files = ['src/a.js'];
+    writeFileSync(join(dir, 'plan.json'), JSON.stringify({ tier: 'standard', fileCount: 1, files, shards: [{ label: 'src', files }] }));
+    writeFileSync(join(dir, 'diff.txt'), `diff --git a/src/a.js b/src/a.js\n--- a/src/a.js\n+++ b/src/a.js\n@@ -1 +1,2 @@\n-a\n+b\n+c\n`);
+    const r = spawnSync(process.execPath, [SCRIPT, '--dir', dir], { encoding: 'utf8' });
+    assert.equal(r.status, 0, r.stderr);
+    const a = JSON.parse(r.stdout);
+    assert.equal(a.shards[0].routed, undefined);
+    assert.deepEqual(a.buildNotes, []);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('CLI: a routed-manifest write failure degrades to no `.routed` field, never crashes the build', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'build-args-routedfail-'));
+  try {
+    const files = ['src/app/UserRepository.java', 'src/app/Widget.js'];
+    writeFileSync(join(dir, 'plan.json'), JSON.stringify({
+      tier: 'standard', fileCount: files.length, files,
+      shards: [{ label: 'src', files }],
+      dimensionAgents: { D6: 'data-store-reviewer', D8: 'data-store-reviewer' },
+    }));
+    writeFileSync(join(dir, 'diff.txt'), files.map((f) =>
+      `diff --git a/${f} b/${f}\n--- a/${f}\n+++ b/${f}\n@@ -1 +1,2 @@\n-a\n+b\n+c\n`).join(''));
+    // Occupy the exact path build-args would write the routed manifest to, with a DIRECTORY instead
+    // of a file, so writeFileSync throws EISDIR — a genuine fs failure, not a stub.
+    mkdirSync(join(dir, 'manifests', '0-src-data-store-reviewer.files'), { recursive: true });
+    const r = spawnSync(process.execPath, [SCRIPT, '--dir', dir], { encoding: 'utf8' });
+    assert.equal(r.status, 0, r.stderr);
+    const a = JSON.parse(r.stdout);
+
+    // the shard's OWN manifest/bundle still wrote fine — untouched by the routed-step failure
+    assert.equal(a.shards[0].manifest, join(dir, 'manifests', '0-src.files'));
+    assert.equal(a.shards[0].routed, undefined);   // routed write failed — degrade, no crash
+    assert.match(a.buildNotes.join(' '), /routed manifests not written/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('CLI: an EMPTY context.txt is reported as a note, not silently dropped', () => {
   const dir = mkdtempSync(join(tmpdir(), 'build-args-pack-'));
   try {
