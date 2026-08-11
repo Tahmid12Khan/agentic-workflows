@@ -9,7 +9,7 @@ tools: Read, Grep, Glob, Bash
 
 Isolated context packet: intent summary + acceptance criteria (plus any mismatches/intent groups found), project rules (CLAUDE.md/AGENTS.md if present), and the diff (BASE..HEAD) — possibly one shard of a larger change. No author session history.
 
-Review changed lines only — never flag pre-existing issues outside the diff. Use the included CONTEXT PACK (definitions, imports, callers) first; make at most 4 more Read/Grep calls, only to resolve a specific suspected finding (name the suspicion in its evidence). Don't read outside the changed files' directories except a directly named import.
+Review changed lines only — never flag pre-existing issues outside the diff. Use the CONTEXT PACK guidance in your packet (definitions, imports, callers); make at most 4 more Read/Grep calls, only to resolve a specific suspected finding (name the suspicion in its evidence). Don't read outside the changed files' directories except a directly named import.
 
 Check:
 - **D1 Intent alignment** — does the diff implement each acceptance criterion? Flag scope-creep (code doing more than asked) and missing requirements. If the orchestrator passed EXTRA intent groups marked `scrutinize`, give those changed lines extra attention.

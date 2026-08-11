@@ -165,6 +165,14 @@
       },
       "additionalProperties": false
     },
+    "routing": {
+      "type": "object",
+      "description": "Dimension-scoped bundles (#9): narrows a reviewer's file scope to the subset matching its dimension's own file-path signal (test files for D5, migration/repository files for D6, contract files for D10) when every dim it covers is independently routable — otherwise (or when a subset match is empty) it keeps full shard scope. Off-switch for the whole mechanism, mirroring large_diff/mega_pr/fanout's own gate precedent.",
+      "properties": {
+        "enabled": { "type": "boolean", "description": "Master switch (default true). Set false to disable the narrowing entirely — every aspect reviews its full shard, as if no dimension were independently routable." }
+      },
+      "additionalProperties": false
+    },
     "checkout": {
       "type": "object",
       "description": "Detach HEAD onto the remote's latest pushed head for the review (restored afterwards), so the reviewers see the most recent pushed code rather than the local checkout. The reviewed diff is the GitHub-exact fork-point (three-dot) range by default. Disable to review the working tree in place.",

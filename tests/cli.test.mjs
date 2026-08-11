@@ -579,6 +579,14 @@ function planForFiles(files, { config } = {}) {
   } finally { rmSync(repo, { recursive: true, force: true }); }
 }
 
+test('plan.mjs: routing.enabled defaults to true, and an explicit false is carried through the plan', () => {
+  const files = { 'src/a.js': 'x\n' };
+  const on = planForFiles(files);
+  assert.equal(on.routing.enabled, true, 'default (no config.routing at all) must be enabled');
+  const off = planForFiles(files, { config: { routing: { enabled: false } } });
+  assert.equal(off.routing.enabled, false);
+});
+
 test('plan.mjs: below mega_pr.threshold, file selection is byte-for-byte the same as selectReviewFiles alone (regression)', () => {
   const files = {
     'src/util/small.js': 'x\n'.repeat(2), 'src/auth/login.js': 'x\n'.repeat(1),

@@ -377,7 +377,9 @@ test('CLI: writes a routed manifest/bundle for a shard whose dims are all indepe
       dimensionAgents: {
         D1: 'correctness-reviewer', D2: 'correctness-reviewer', D12: 'correctness-reviewer',
         D5: 'test-adequacy-reviewer',
-        D6: 'data-store-reviewer', D8: 'data-store-reviewer',
+        // D6 alone (D8 is deliberately NOT independently routable — see routedFiles' ROUTED table —
+        // so a data-store-reviewer aspect covering D6+D8 together would stay full-scope instead).
+        D6: 'data-store-reviewer',
       },
     }));
     writeFileSync(join(dir, 'diff.txt'), files.map((f) =>
@@ -389,7 +391,7 @@ test('CLI: writes a routed manifest/bundle for a shard whose dims are all indepe
     const shard = a.shards[0];
     assert.ok(shard.routed, 'shard should carry a routed map');
 
-    // data-store-reviewer (D6+D8, folded) narrows to just the Repository file
+    // data-store-reviewer (D6 alone) narrows to just the Repository file
     const ds = shard.routed['data-store-reviewer'];
     assert.ok(ds, 'data-store-reviewer should get a routed entry');
     assert.equal(ds.count, 1);
@@ -406,6 +408,11 @@ test('CLI: writes a routed manifest/bundle for a shard whose dims are all indepe
 
     // correctness-reviewer (D1/D2/D12, always full-scope) gets NO routed entry at all
     assert.equal(shard.routed['correctness-reviewer'], undefined);
+
+    // Fix 3: ONE aggregate note summarizes both narrowed pairs (data-store + test-adequacy), not
+    // one note per shard/agent — 2 pairs narrowed to 1 file each out of 3 files each (2/6 total).
+    assert.equal(a.buildNotes.length, 1);
+    assert.match(a.buildNotes[0], /dimension routing narrowed 2 \(shard, agent\) pair\(s\) to 2\/6 files total/);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
@@ -492,8 +499,10 @@ test('CLI: a routed-manifest write failure degrades to no `.routed` field, never
     const files = ['src/app/UserRepository.java', 'src/app/Widget.js'];
     writeFileSync(join(dir, 'plan.json'), JSON.stringify({
       tier: 'standard', fileCount: files.length, files,
+      // D6 alone: it must actually narrow (and thus attempt the write below) for this test to
+      // exercise a real EISDIR failure — D6+D8 together would stay full-scope and skip the write.
       shards: [{ label: 'src', files }],
-      dimensionAgents: { D6: 'data-store-reviewer', D8: 'data-store-reviewer' },
+      dimensionAgents: { D6: 'data-store-reviewer' },
     }));
     writeFileSync(join(dir, 'diff.txt'), files.map((f) =>
       `diff --git a/${f} b/${f}\n--- a/${f}\n+++ b/${f}\n@@ -1 +1,2 @@\n-a\n+b\n+c\n`).join(''));
@@ -507,7 +516,29 @@ test('CLI: a routed-manifest write failure degrades to no `.routed` field, never
     // the shard's OWN manifest/bundle still wrote fine — untouched by the routed-step failure
     assert.equal(a.shards[0].manifest, join(dir, 'manifests', '0-src.files'));
     assert.equal(a.shards[0].routed, undefined);   // routed write failed — degrade, no crash
-    assert.match(a.buildNotes.join(' '), /routed manifests not written/);
+    // Fix 6: the note is qualified ("some reviewers"), not an unqualified "reviewers fall back" —
+    // a mid-loop failure only strands the shards/agents not yet processed when it threw.
+    assert.match(a.buildNotes.join(' '), /routed manifests not written.*some reviewers may fall back to full-shard scope/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('CLI: dimension routing narrows nothing (and raises no note) when routing.enabled is false', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'build-args-routingoff-'));
+  try {
+    const files = ['src/app/UserRepository.java', 'src/app/UserController.java', 'src/app/UserService.test.js'];
+    writeFileSync(join(dir, 'plan.json'), JSON.stringify({
+      tier: 'standard', fileCount: files.length, files,
+      shards: [{ label: 'src', files }],
+      dimensionAgents: { D5: 'test-adequacy-reviewer', D6: 'data-store-reviewer' },
+      routing: { enabled: false },
+    }));
+    writeFileSync(join(dir, 'diff.txt'), files.map((f) =>
+      `diff --git a/${f} b/${f}\n--- a/${f}\n+++ b/${f}\n@@ -1 +1,2 @@\n-a\n+b\n+c\n`).join(''));
+    const r = spawnSync(process.execPath, [SCRIPT, '--dir', dir], { encoding: 'utf8' });
+    assert.equal(r.status, 0, r.stderr);
+    const a = JSON.parse(r.stdout);
+    assert.equal(a.shards[0].routed, undefined);   // the whole step was skipped, not just left empty
+    assert.deepEqual(a.buildNotes, []);            // no misleading "narrowed" note for a disabled mechanism
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 

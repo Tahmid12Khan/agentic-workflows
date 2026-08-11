@@ -85,14 +85,38 @@ test('routedFiles: a single routed dim (D5/test-adequacy) narrows to matching te
   assert.deepEqual(routedFiles(['D5'], files), ['src/App.test.tsx']);
 });
 
-test('routedFiles: two dims sharing one agent (D6+D8) narrow via the union of their tests', () => {
-  // D6 and D8 both fold into data-store-reviewer, and both resolve to the identical DATA_FILE test
-  // in this mapping — the union-of-matches must therefore equal what either dim alone would match.
+test('routedFiles: D6 alone narrows to data/migration/repository files', () => {
   const files = ['app/UserRepository.java', 'app/UserController.java'];
-  const viaBoth = routedFiles(['D6', 'D8'], files);
-  const viaOne = routedFiles(['D6'], files);
-  assert.deepEqual(viaBoth, ['app/UserRepository.java']);
-  assert.deepEqual(viaBoth, viaOne);
+  assert.deepEqual(routedFiles(['D6'], files), ['app/UserRepository.java']);
+});
+
+test('routedFiles: D8 is NOT independently routable — an agent whose dims include D8 keeps FULL scope, even though D6\'s pattern would otherwise match', () => {
+  // D8 ("connections & resources": pool sizing, connection leaks, closeable lifecycle, HTTP
+  // keep-alive) has no file-path signal of its own — none of that lives in .sql/migration/repository
+  // files, so it must never ride on D6's DATA_FILE test. data-store-reviewer covers D6+D8 together
+  // (see triage.mjs DIMENSION_AGENTS), so this is the realistic production dims list for that agent.
+  const files = ['app/UserRepository.java', 'app/UserController.java'];
+  assert.deepEqual(routedFiles(['D6', 'D8'], files), files);
+  assert.deepEqual(routedFiles(['D8'], files), files);
+});
+
+test('routedFiles: TEST_FILE now catches pytest test_*.py, C#/Java/Kotlin *Test(s), and bare _spec suffixes', () => {
+  // Confirmed misses from the whole-branch review: a PARTIAL match (some files caught, most missed)
+  // is the dangerous case — it silently narrows a reviewer away from the file that actually matters.
+  assert.deepEqual(routedFiles(['D5'], ['mypkg/test_payments.py', 'mypkg/payments.py']), ['mypkg/test_payments.py']);
+  assert.deepEqual(routedFiles(['D5'], ['app/FooTests.cs', 'app/Foo.cs']), ['app/FooTests.cs']);
+  assert.deepEqual(routedFiles(['D5'], ['lib/foo_spec.rb', 'lib/foo.rb']), ['lib/foo_spec.rb']);
+  // sanity: ordinary non-test files in the same shard must still NOT match
+  assert.deepEqual(routedFiles(['D5'], ['src/latest_report.py', 'src/testimonial.py']), ['src/latest_report.py', 'src/testimonial.py']);
+});
+
+test('routedFiles: CONTRACT_FILE now catches a Controller-suffixed file with no controller/ directory', () => {
+  assert.deepEqual(routedFiles(['D10'], ['src/api/UserController.java', 'src/api/openapi.yaml']),
+    ['src/api/UserController.java', 'src/api/openapi.yaml']);
+  assert.deepEqual(routedFiles(['D10'], ['src/api/UserController.java', 'src/api/UserService.java']),
+    ['src/api/UserController.java']);
+  // sanity: an unrelated file must still NOT match
+  assert.deepEqual(routedFiles(['D10'], ['src/api/ControlPanel.java']), ['src/api/ControlPanel.java']);
 });
 
 test('routedFiles: an agent mixing a routed and an unrouted dim keeps FULL scope, never partial', () => {
@@ -121,16 +145,59 @@ test('expandAspects narrows a routed dimension to a strict file subset, nulling 
     files: ['app/UserRepository.java', 'app/UserController.java'],
     parts: ['/s/bundles/0-src-0.txt'],
   }];
-  // D6 + D8 both map to data-store-reviewer and fold into one aspect (second pass runs AFTER both
-  // dims are known, so it sees the full dims list, not just the first dim added).
-  const aspects = expandAspects({ D6: 'data-store-reviewer', D8: 'data-store-reviewer' }, shards);
+  const aspects = expandAspects({ D6: 'data-store-reviewer' }, shards);
   assert.equal(aspects.length, 1);
   const a = aspects[0];
-  assert.deepEqual(a.dims, ['D6', 'D8']);
+  assert.deepEqual(a.dims, ['D6']);
   assert.deepEqual(a.files, ['app/UserRepository.java']);
   assert.equal(a.manifest, null);   // no longer matches the full shard on disk — nulled
   assert.equal(a.parts, null);
   assert.equal(a.count, 1);
+});
+
+test('expandAspects: an aspect whose dims include D8 keeps FULL scope even though D6\'s pattern would otherwise narrow', () => {
+  // data-store-reviewer covers D6+D8 together (triage.mjs DIMENSION_AGENTS) — the second pass folds
+  // both dims into ONE aspect, and D8 has no routing test at all, so the "any unrouted dim => full
+  // scope" rule must win: the aspect must NOT narrow to just the Repository file.
+  const shards = [{
+    label: 'src', count: 2, manifest: '/s/manifests/0-src.files',
+    files: ['app/UserRepository.java', 'app/UserController.java'],
+    parts: ['/s/bundles/0-src-0.txt'],
+  }];
+  const aspects = expandAspects({ D6: 'data-store-reviewer', D8: 'data-store-reviewer' }, shards);
+  assert.equal(aspects.length, 1);
+  const a = aspects[0];
+  assert.deepEqual(a.dims, ['D6', 'D8']);
+  assert.deepEqual(a.files, ['app/UserRepository.java', 'app/UserController.java']);   // untouched
+  assert.equal(a.manifest, '/s/manifests/0-src.files');   // NOT nulled — nothing was narrowed
+  assert.deepEqual(a.parts, ['/s/bundles/0-src-0.txt']);
+  assert.equal(a.count, 2);
+});
+
+// --- expandAspects × routing.enabled off-switch (#9 fix 3) ---
+
+test('expandAspects: routingEnabled:false disables the SECONDARY (inline-files) narrowing path', () => {
+  const shards = [{ label: 'src', files: ['app/UserRepository.java', 'app/UserController.java'] }];
+  const aspects = expandAspects({ D6: 'data-store-reviewer' }, shards, { routingEnabled: false });
+  assert.deepEqual(aspects[0].files, ['app/UserRepository.java', 'app/UserController.java']);
+});
+
+test('expandAspects: routingEnabled:false also ignores a precomputed routed[agent] entry (the PRIMARY path)', () => {
+  const shards = [{
+    label: 'src', count: 2, manifest: '/s/manifests/0-src.files', parts: ['/s/bundles/0-src-0.txt'], files: [],
+    routed: { 'data-store-reviewer': { manifest: '/s/manifests/0-src-data-store-reviewer.files', parts: ['/s/bundles/0-src-data-store-reviewer-0.txt'], count: 1 } },
+  }];
+  const aspects = expandAspects({ D6: 'data-store-reviewer' }, shards, { routingEnabled: false });
+  const a = aspects[0];
+  assert.equal(a.manifest, '/s/manifests/0-src.files');   // the FULL shard manifest, not the routed one
+  assert.deepEqual(a.parts, ['/s/bundles/0-src-0.txt']);
+  assert.equal(a.count, 2);
+});
+
+test('expandAspects: routingEnabled defaults to true (omitted opts narrow exactly as before)', () => {
+  const shards = [{ label: 'src', files: ['app/UserRepository.java', 'app/UserController.java'] }];
+  const aspects = expandAspects({ D6: 'data-store-reviewer' }, shards);
+  assert.deepEqual(aspects[0].files, ['app/UserRepository.java']);
 });
 
 test('expandAspects: an unrouted dim (correctness-reviewer, D1/D2/D12) is never narrowed', () => {
