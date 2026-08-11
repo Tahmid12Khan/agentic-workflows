@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync, readFileSync, rmSync, existsSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, readFileSync, rmSync, existsSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { buildArgs, mergeEnrich, knownFalsePositives, rangesBySliceName, sliceNameCollision, manifestText, manifestName, bundleParts, contextPackNote } from '../lib/build-args.mjs';
@@ -26,11 +26,12 @@ test('buildArgs: emits exactly the keys review-workflow.mjs destructures', () =>
     meta: { flags: { gate: true }, startedAt: 'T', prNumber: 7, checkout: null },
   });
   assert.deepEqual(Object.keys(out).sort(),
-    ['allManifest', 'allParts', 'buildNotes', 'bundle', 'checkout', 'contextPackPath', 'contextPackStats', 'diffIndex', 'diffPath', 'diffRanges', 'doctrineText', 'flags', 'historyPath', 'knownFalsePositives', 'plan', 'prNumber', 'routing', 'shards', 'sliceDir', 'startedAt', 'testSignal'].sort());
+    ['allManifest', 'allParts', 'buildNotes', 'bundle', 'checkout', 'contextDir', 'contextPackPath', 'contextPackStats', 'diffIndex', 'diffPath', 'diffRanges', 'doctrineText', 'flags', 'historyPath', 'knownFalsePositives', 'plan', 'prNumber', 'routing', 'shards', 'sliceDir', 'startedAt', 'testSignal'].sort());
   assert.equal(out.allManifest, null);      // no manifest written → the workflow falls back to inline shard files
   assert.equal(out.allParts, null);         // no bundle written → D3/intent fall back to the bare diffRead
   assert.deepEqual(out.buildNotes, []);     // nothing degraded → no seeded note (the common case, zero cost)
   assert.equal(out.sliceDir, null);   // absent → null so the workflow falls back to the full diff (no slicing)
+  assert.equal(out.contextDir, null); // absent → null so the workflow falls back to the whole context pack
   assert.deepEqual(out.doctrineText, {});   // WS1: absent → {} so the workflow attaches no doctrine
   assert.deepEqual(out.shards, [{ label: 'all', files: ['a.js'] }]); // lifted from plan
   assert.deepEqual(out.routing, { scrutiny: { foo: 1 }, checks: { bar: 2 } });
@@ -118,6 +119,12 @@ test('buildArgs: provided context pack stats are carried through', () => {
   const stats = { sizeBytes: 100, files: 1, imports: 1, callerHits: 2, hop2: 0, typeBoundary: 0 };
   const out = buildArgs({ plan: {}, bundle: {}, diffPath: '/d', contextPackStats: stats });
   assert.deepEqual(out.contextPackStats, stats);
+});
+
+test('buildArgs: a provided context fragment dir is carried through, absent one degrades to null', () => {
+  assert.equal(buildArgs({ plan: {}, bundle: {}, diffPath: '/d' }).contextDir, null);
+  const out = buildArgs({ plan: {}, bundle: {}, diffPath: '/d', contextDir: '/scratch/context' });
+  assert.equal(out.contextDir, '/scratch/context');
 });
 
 test('rangesBySliceName: rekeys the reviewed files\u2019 ranges by slice name, dropping files absent from the diff', () => {
@@ -367,6 +374,51 @@ test('CLI: an EMPTY context.txt is reported as a note, not silently dropped', ()
     assert.equal(a.contextPackPath, null);          // still degrades — reviewers fall back to Read/Grep
     assert.equal(a.buildNotes.length, 1);           // ...but the user is told
     assert.match(a.buildNotes[0], /context pack .* EMPTY/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('CLI: a populated context/ dir is attached as contextDir; missing/empty degrades to null with no note', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'build-args-ctxdir-'));
+  try {
+    writeFileSync(join(dir, 'plan.json'), '{"tier":"standard","shards":[{"label":"all","files":["a.js"]}]}');
+    writeFileSync(join(dir, 'diff.txt'), 'diff --git a/a.js b/a.js\n--- a/a.js\n+++ b/a.js\n@@ -1 +1,2 @@\n-a\n+b\n');
+    // no context/ dir at all yet — an older run / the pre-step didn't write fragments
+    let r = spawnSync(process.execPath, [SCRIPT, '--dir', dir], { encoding: 'utf8' });
+    assert.equal(r.status, 0, r.stderr);
+    let a = JSON.parse(r.stdout);
+    assert.equal(a.contextDir, null);
+    assert.deepEqual(a.buildNotes, []);   // absence is normal, not a degrade worth a note
+
+    // an empty context/ dir (context-pack.mjs ran but wrote nothing) is treated the same way
+    mkdirSync(join(dir, 'context'));
+    r = spawnSync(process.execPath, [SCRIPT, '--dir', dir], { encoding: 'utf8' });
+    assert.equal(r.status, 0, r.stderr);
+    a = JSON.parse(r.stdout);
+    assert.equal(a.contextDir, null);
+    assert.deepEqual(a.buildNotes, []);
+
+    // a populated context/ dir is attached by its absolute path
+    writeFileSync(join(dir, 'context', 'abc123.patch'), 'FILE: a.js\n1| a\n');
+    r = spawnSync(process.execPath, [SCRIPT, '--dir', dir], { encoding: 'utf8' });
+    assert.equal(r.status, 0, r.stderr);
+    a = JSON.parse(r.stdout);
+    assert.equal(a.contextDir, join(dir, 'context'));
+    assert.deepEqual(a.buildNotes, []);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('CLI: a context path that collides with a plain file degrades contextDir to null with a note', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'build-args-ctxdir-blocked-'));
+  try {
+    writeFileSync(join(dir, 'plan.json'), '{"tier":"standard","shards":[{"label":"all","files":["a.js"]}]}');
+    writeFileSync(join(dir, 'diff.txt'), 'diff --git a/a.js b/a.js\n');
+    writeFileSync(join(dir, 'context'), 'not a directory');   // occupies the path build-args expects as a dir
+    const r = spawnSync(process.execPath, [SCRIPT, '--dir', dir], { encoding: 'utf8' });
+    assert.equal(r.status, 0, r.stderr);
+    const a = JSON.parse(r.stdout);
+    assert.equal(a.contextDir, null);
+    assert.equal(a.buildNotes.length, 1);
+    assert.match(a.buildNotes[0], /context fragments dir unreadable/);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 

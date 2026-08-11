@@ -8,6 +8,7 @@ import { mkdtempSync, existsSync, readFileSync, rmSync, readdirSync, mkdirSync, 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { sliceName } from '../lib/trim-diff.mjs';
 
 const REPORT = new URL('../lib/report.mjs', import.meta.url).pathname;
 
@@ -175,6 +176,46 @@ test('context-pack.mjs --stats-out writes the same stats as JSON, without touchi
     assert.equal(stats.files, 1);
     assert.ok(stats.callerHits > 0);             // caller.mjs references add() (import line + call site)
     assert.ok(stats.sizeBytes > 0);
+  } finally { rmSync(repo, { recursive: true, force: true }); }
+});
+
+test('context-pack.mjs --context-dir writes one fragment per file, named via sliceName, matching its pack section', () => {
+  const repo = mkdtempSync(join(tmpdir(), 'acr-ctx-fragdir-'));
+  const git = (...a) => execFileSync('git', a, { cwd: repo, stdio: ['pipe', 'pipe', 'pipe'] });
+  try {
+    git('init', '-q');
+    git('config', 'user.email', 't@t'); git('config', 'user.name', 't');
+    writeFileSync(join(repo, 'math.mjs'), 'export function add(a, b) {\n  return a + b;\n}\n');
+    writeFileSync(join(repo, 'caller.mjs'), "import { add } from './math.mjs';\nconsole.log(add(1, 2));\n");
+    git('add', '-A'); git('commit', '-qm', 'init');
+    writeFileSync(join(repo, 'math.mjs'), 'export function add(a, b) {\n  const s = a + b;\n  return s;\n}\n');
+    writeFileSync(join(repo, 'diff.txt'), execFileSync('git', ['diff'], { cwd: repo, encoding: 'utf8' }));
+    const ctxDir = join(repo, 'context');
+    const out = execFileSync(node, [join(LIB, 'context-pack.mjs'), '--diff', join(repo, 'diff.txt'), '--context-dir', ctxDir], { cwd: repo, encoding: 'utf8' });
+    assert.match(out, /CONTEXT PACK/);   // stdout still holds the whole pack, unaffected
+    const files = readdirSync(ctxDir);
+    assert.equal(files.length, 1);       // only math.mjs has new-side content (caller.mjs is unchanged)
+    assert.equal(files[0], sliceName('math.mjs'));   // same derivation as that file's diff slice
+    const fragment = readFileSync(join(ctxDir, files[0]), 'utf8');
+    assert.match(fragment, /===== FILE: math\.mjs =====/);
+    assert.match(fragment, /const s = a \+ b;/);
+    assert.ok(out.includes(fragment), 'the fragment must be verbatim inside the whole pack');
+  } finally { rmSync(repo, { recursive: true, force: true }); }
+});
+
+test('context-pack.mjs --context-dir failure degrades silently (pack still reaches stdout, no crash)', () => {
+  const repo = mkdtempSync(join(tmpdir(), 'acr-ctx-fragdir-bad-'));
+  const git = (...a) => execFileSync('git', a, { cwd: repo, stdio: ['pipe', 'pipe', 'pipe'] });
+  try {
+    git('init', '-q');
+    git('config', 'user.email', 't@t'); git('config', 'user.name', 't');
+    writeFileSync(join(repo, 'math.mjs'), 'export function add(a, b) {\n  return a + b;\n}\n');
+    git('add', '-A'); git('commit', '-qm', 'init');
+    writeFileSync(join(repo, 'math.mjs'), 'export function add(a, b) {\n  return a - b;\n}\n');
+    writeFileSync(join(repo, 'diff.txt'), execFileSync('git', ['diff'], { cwd: repo, encoding: 'utf8' }));
+    writeFileSync(join(repo, 'blocked'), 'not a directory');   // occupies the path --context-dir needs as a dir
+    const out = execFileSync(node, [join(LIB, 'context-pack.mjs'), '--diff', join(repo, 'diff.txt'), '--context-dir', join(repo, 'blocked')], { cwd: repo, encoding: 'utf8' });
+    assert.match(out, /CONTEXT PACK/);   // the whole pack still reaches stdout despite the fragment-write failure
   } finally { rmSync(repo, { recursive: true, force: true }); }
 });
 

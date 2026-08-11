@@ -214,6 +214,14 @@ test('review-workflow.mjs declares a valid meta with 4 phases', () => {
   assert.match(src, /const \{ plan, bundle, diffPath, contextPackPath, diffIndex,/, 'diffPath/contextPackPath/diffIndex must be destructured from args');
   assert.match(src, /const packBlock =/, 'the context pack path must be turned into a prepend block');
   assert.match(src, /\$\{packBlock\}/, 'packBlock must be prepended to the reviewer packet(s)');
+  // Task 1 (#6): packBlock must branch on contextDir (per-file on-demand fragments) BEFORE falling
+  // back to the original whole-pack contextPackPath instruction, so a reviewer never reads the
+  // whole pack up front when fragments are available.
+  assert.match(src, /const \{ plan, bundle, diffPath, contextPackPath, diffIndex, historyPath, testSignal, shards, routing, flags, startedAt, prNumber, checkout, diffRanges, sliceDir, contextDir,/, 'contextDir must be destructured from args');
+  assert.match(src, /const packBlock = contextDir\n(\s*)\? `Per-file CONTEXT FRAGMENTS/, 'packBlock must check contextDir first');
+  assert.match(src, /pull ONLY the fragment for a file you suspect has a finding/, 'the contextDir branch must instruct on-demand pulls, scoped to a suspected file');
+  assert.match(src, /\$\{contextDir\}\/<slice-name>/, 'the contextDir branch must point at the per-file fragment path, named via sliceName');
+  assert.match(src, /: contextPackPath\n(\s*)\? `A shared CONTEXT PACK.*Read it FIRST, before the diff/, 'the whole-pack fallback instruction must still exist when contextDir is absent');
   // ARGS-BY-REFERENCE: the diff is NEVER inlined — agents Read it from diffPath. The old in-sandbox
   // diff-trim helpers must be gone (their return re-inflated args past the Workflow inline limit).
   assert.match(src, /const diffRead = `Read the diff at \$\{diffPath\}/, 'the workflow must hand agents the diff PATH to Read, not inlined text');
