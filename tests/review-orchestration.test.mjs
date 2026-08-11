@@ -222,6 +222,15 @@ test('review-workflow.mjs declares a valid meta with 4 phases', () => {
   assert.match(src, /pull ONLY the fragment for a file you suspect has a finding/, 'the contextDir branch must instruct on-demand pulls, scoped to a suspected file');
   assert.match(src, /\$\{contextDir\}\/<slice-name>/, 'the contextDir branch must point at the per-file fragment path, named via sliceName');
   assert.match(src, /: contextPackPath\n(\s*)\? `A shared CONTEXT PACK.*Read it FIRST, before the diff/, 'the whole-pack fallback instruction must still exist when contextDir is absent');
+  // Task 2 (#7): a batched verifier group gets the SAME per-file context fragments as a reviewer,
+  // via a contextDir/sliceName lookup mirroring slicesFor's diff-slice lookup — for non-taint groups
+  // only (taint verifiers already reason cross-file over the whole diff and are left as-is).
+  assert.match(src, /const contextFragmentsFor = \(files = \[\]\) => \(contextDir/, 'contextFragmentsFor helper must exist for verifier groups');
+  assert.match(src, /const gFragments = isTaint \? \[\] : contextFragmentsFor\(group\.files\)/, 'spawnBatchVerifier must fetch context fragments for non-taint groups only, never taint');
+  assert.match(src, /The enclosing definitions\/imports\/callers for the file\(s\) you're verifying are at/, 'spawnBatchVerifier prompt must point the verifier at its context fragment(s)');
+  // GENEROUS read-budget for verifiers ("do not starve them" — the plan's own words): wider than the
+  // dimension reviewers' 4-lookup budget, since a verifier batch can span several files.
+  assert.match(src, /Make at most 7 additional lookups/, 'spawnBatchVerifier must give verifiers a wider (7) read-budget than the reviewer 4-lookup budget');
   // ARGS-BY-REFERENCE: the diff is NEVER inlined — agents Read it from diffPath. The old in-sandbox
   // diff-trim helpers must be gone (their return re-inflated args past the Workflow inline limit).
   assert.match(src, /const diffRead = `Read the diff at \$\{diffPath\}/, 'the workflow must hand agents the diff PATH to Read, not inlined text');
