@@ -80,6 +80,33 @@ test('renderReport + renderHtml surface the files-funneled WARN, absent when the
   assert.doesNotMatch(renderHtml({ findings, criteria, tier: 'high' }), /Mega-PR funnel/);
 });
 
+// Composed case (review fix-round finding): when the funnel runs FIRST and selectReviewFiles then
+// caps its OUTPUT, filesCapped.total is the funnel's reduced candidate count, not the change's true
+// original file count — the files-capped WARN must still name the true count somewhere, standalone,
+// so a reader who only sees this one line is never misled about the PR's real size.
+test('filesCappedWarning composed with filesFunneled states the TRUE original file count, not just the funnel-reduced one', () => {
+  const funneled = { threshold: 250, totalFiles: 260, hot: 10, mechanicalClusters: 1, mechanicalTotal: 250, sampled: 38, skippedTotal: 212, clusters: [] };
+  const capped = { max: 10, total: 48, reviewed: 10, dropped: 38 };   // 48 = the FUNNEL's output, not the true 260
+  const w = filesCappedWarning(capped, funneled);
+  assert.match(w, /260/, 'must state the true original file count somewhere');
+  assert.match(w, /48/, 'must still name the funnel-reduced candidate count for context');
+  // uncomposed call (no filesFunneled) must be completely unaffected — same text as before this fix
+  const plain = filesCappedWarning(capped);
+  assert.doesNotMatch(plain, /260/);
+  assert.match(plain, /48/);
+});
+
+test('renderReport + renderHtml: the composed files-capped WARN states the true pre-funnel total', () => {
+  const funneled = { threshold: 250, totalFiles: 260, hot: 10, mechanicalClusters: 1, mechanicalTotal: 250, sampled: 38, skippedTotal: 212, clusters: [{ label: 'gen/*.py', total: 250, sampled: 38, skipped: 212 }] };
+  const capped = { max: 10, total: 48, reviewed: 10, dropped: 38 };
+  const md = renderReport({ findings, criteria, tier: 'high', filesCapped: capped, filesFunneled: funneled });
+  assert.match(md, /WARN — file limit exceeded/);
+  assert.match(md, /260/, 'markdown files-capped WARN must state the true original count');
+  const html = renderHtml({ findings, criteria, tier: 'high', filesCapped: capped, filesFunneled: funneled });
+  assert.match(html, /File limit exceeded/);
+  assert.match(html, /260/, 'HTML files-capped banner must state the true original count');
+});
+
 // --- S6.4: executed-test signal in the report header ---
 test('testSignalText: null when not run, pass/fail line with capped names otherwise', () => {
   assert.equal(testSignalText(null), null);
