@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { expandAspects, findingKey, newCaps, canSpawn, recordSpawn, buildReportPayload, pluginAgent, PLUGIN_NS, inDiffScope, partitionByScope, intentBrief, briefFor, CRITERIA_AGENTS, synthIntent, criticIntent, intentContext, screenPacket, selectGaps, CONSEQUENCE_DIRECTIVE, historyBlock, testSignalBlock, reviewerAddendum, DOUBLE_RUN_AGENTS, isDoubleRunAgent, dedupeFindings } from '../lib/review-orchestration.mjs';
+import { expandAspects, routedFiles, findingKey, newCaps, canSpawn, recordSpawn, buildReportPayload, pluginAgent, PLUGIN_NS, inDiffScope, partitionByScope, intentBrief, briefFor, CRITERIA_AGENTS, synthIntent, criticIntent, intentContext, screenPacket, selectGaps, CONSEQUENCE_DIRECTIVE, historyBlock, testSignalBlock, reviewerAddendum, DOUBLE_RUN_AGENTS, isDoubleRunAgent, dedupeFindings } from '../lib/review-orchestration.mjs';
 
 test('expandAspects = agents × shards, dims carried as a list', () => {
   const aspects = expandAspects(
@@ -76,6 +76,98 @@ test('expandAspects collapses unsharded dims to one all-files aspect', () => {
   assert.equal(d3.length, 1);
   assert.deepEqual(d3[0], { dims: ['D3'], agent: 'vuln-reviewer', shardId: 'all', files: ['a.ts', 'b.ts'], manifest: null, count: 2, parts: null });
   assert.equal(aspects.filter((a) => a.dims.includes('D2')).length, 2);
+});
+
+// --- routedFiles (dimension-scoped bundles, #9) ---
+
+test('routedFiles: a single routed dim (D5/test-adequacy) narrows to matching test files', () => {
+  const files = ['src/App.tsx', 'src/App.test.tsx'];
+  assert.deepEqual(routedFiles(['D5'], files), ['src/App.test.tsx']);
+});
+
+test('routedFiles: two dims sharing one agent (D6+D8) narrow via the union of their tests', () => {
+  // D6 and D8 both fold into data-store-reviewer, and both resolve to the identical DATA_FILE test
+  // in this mapping — the union-of-matches must therefore equal what either dim alone would match.
+  const files = ['app/UserRepository.java', 'app/UserController.java'];
+  const viaBoth = routedFiles(['D6', 'D8'], files);
+  const viaOne = routedFiles(['D6'], files);
+  assert.deepEqual(viaBoth, ['app/UserRepository.java']);
+  assert.deepEqual(viaBoth, viaOne);
+});
+
+test('routedFiles: an agent mixing a routed and an unrouted dim keeps FULL scope, never partial', () => {
+  // D5 is routable (TEST_FILE); D2 has no routing test at all. Narrowing only on D5's test would
+  // silently under-serve D2's full-diff need, so the whole aspect must fall back to full scope.
+  const files = ['src/App.tsx', 'src/App.test.tsx'];
+  assert.deepEqual(routedFiles(['D5', 'D2'], files), files);
+});
+
+test('routedFiles: zero matches in a shard falls back to the full file list, never empty', () => {
+  const files = ['src/App.tsx', 'src/util.ts'];   // no test files in this shard
+  assert.deepEqual(routedFiles(['D5'], files), files);
+});
+
+test('routedFiles: an unmapped/empty dims list returns files unchanged', () => {
+  const files = ['a.ts', 'b.ts'];
+  assert.deepEqual(routedFiles([], files), files);
+  assert.deepEqual(routedFiles(undefined, files), files);
+});
+
+// --- expandAspects × routedFiles integration ---
+
+test('expandAspects narrows a routed dimension to a strict file subset, nulling manifest/parts and updating count', () => {
+  const shards = [{
+    label: 'src', count: 2, manifest: '/s/manifests/0-src.files',
+    files: ['app/UserRepository.java', 'app/UserController.java'],
+    parts: ['/s/bundles/0-src-0.txt'],
+  }];
+  // D6 + D8 both map to data-store-reviewer and fold into one aspect (second pass runs AFTER both
+  // dims are known, so it sees the full dims list, not just the first dim added).
+  const aspects = expandAspects({ D6: 'data-store-reviewer', D8: 'data-store-reviewer' }, shards);
+  assert.equal(aspects.length, 1);
+  const a = aspects[0];
+  assert.deepEqual(a.dims, ['D6', 'D8']);
+  assert.deepEqual(a.files, ['app/UserRepository.java']);
+  assert.equal(a.manifest, null);   // no longer matches the full shard on disk — nulled
+  assert.equal(a.parts, null);
+  assert.equal(a.count, 1);
+});
+
+test('expandAspects: an unrouted dim (correctness-reviewer, D1/D2/D12) is never narrowed', () => {
+  const shards = [{ label: 'src', files: ['app/UserRepository.java', 'app/UserController.java'], manifest: '/s/m.files', parts: ['/s/b-0.txt'] }];
+  const aspects = expandAspects({ D1: 'correctness-reviewer', D2: 'correctness-reviewer', D12: 'correctness-reviewer' }, shards);
+  assert.deepEqual(aspects[0].files, ['app/UserRepository.java', 'app/UserController.java']);
+  assert.equal(aspects[0].manifest, '/s/m.files');
+  assert.equal(aspects[0].parts.length, 1);
+});
+
+test('expandAspects: D3\'s unsharded aspect is NEVER narrowed, even if its dim were hypothetically routable', () => {
+  // Use D6 (a real ROUTED dim) as the unsharded one here on purpose: if the exclusion were
+  // (incorrectly) keyed off ROUTED-table membership or off the literal 'all' shardId rather than
+  // the unsharded/full-scope path itself, this would wrongly narrow to just the Repository file.
+  const shards = [{ label: 'A', files: ['x/Repository.java', 'x/plain.js'] }];
+  const aspects = expandAspects({ D6: 'vuln-reviewer' }, shards, { unsharded: ['D6'] });
+  assert.equal(aspects.length, 1);
+  assert.equal(aspects[0].shardId, 'all');
+  assert.deepEqual(aspects[0].files, ['x/Repository.java', 'x/plain.js']);   // untouched, full scope
+});
+
+test('expandAspects: a shard label that happens to be "all" (singleShard\'s default, unrelated to unsharded dims) still narrows normally', () => {
+  // lib/shard.mjs's singleShard() labels the sole shard 'all' for any PR below the sharding
+  // threshold — the common case. A shardId==='all' check would misdetect this as the D3-style
+  // full-scope aspect and silently disable narrowing for most PRs; it must not.
+  const shards = [{
+    label: 'all', count: 2, manifest: '/s/manifests/0-all.files',
+    files: ['x/Repository.java', 'x/plain.js'],
+    parts: ['/s/bundles/0-all-0.txt'],
+  }];
+  const aspects = expandAspects({ D6: 'data-store-reviewer' }, shards);   // NOT in `unsharded`
+  assert.equal(aspects.length, 1);
+  assert.equal(aspects[0].shardId, 'all');
+  assert.deepEqual(aspects[0].files, ['x/Repository.java']);
+  assert.equal(aspects[0].manifest, null);
+  assert.equal(aspects[0].parts, null);
+  assert.equal(aspects[0].count, 1);
 });
 
 test('findingKey is line-sensitive and title-normalized', () => {
@@ -705,6 +797,7 @@ const SYNCED_FUNCTIONS = [
   ['selectForVerification', '../lib/verify.mjs'],
   ['resolveVerification', '../lib/verify.mjs'],
   ['partition', '../lib/verify.mjs'],
+  ['routedFiles', '../lib/review-orchestration.mjs'],
   ['expandAspects', '../lib/review-orchestration.mjs'],
   ['intentBrief', '../lib/review-orchestration.mjs'],
   ['briefFor', '../lib/review-orchestration.mjs'],
