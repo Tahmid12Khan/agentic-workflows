@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { renderReport, renderVerdict, renderHtml, agentCoverage, testSignalText, tallyLine, contextPackStatsLine, filesCappedWarning } from '../lib/render.mjs';
+import { renderReport, renderVerdict, renderHtml, agentCoverage, testSignalText, tallyLine, contextPackStatsLine, filesCappedWarning, filesFunneledWarning } from '../lib/render.mjs';
 
 const findings = [
   { dimension: 'D3', severity: 'critical', file: 'src/auth.ts', line: 42, title: 'Missing authz', confidence: 95, evidence: 'no role check', fix: 'add requirePermission' },
@@ -47,6 +47,37 @@ test('renderReport + renderHtml surface the files-capped WARN near the top', () 
   assert.match(html, /File limit exceeded/);
   assert.match(html, /217 files changed/);
   assert.doesNotMatch(renderHtml({ findings, criteria, tier: 'high' }), /File limit exceeded/);
+});
+
+// --- mega-PR funnel WARN (#10) ---
+test('filesFunneledWarning: null when the funnel never engaged, loud WARN with cluster detail when it did', () => {
+  assert.equal(filesFunneledWarning(null), null);
+  assert.equal(filesFunneledWarning({ mechanicalClusters: 0 }), null);   // engaged but nothing was mechanical → no warn
+  const w = filesFunneledWarning({
+    threshold: 250, hot: 20, mechanicalClusters: 1, mechanicalTotal: 100, sampled: 15, skippedTotal: 85,
+    clusters: [{ label: 'gen/*.py', total: 100, sampled: 15, skipped: 85 }],
+  });
+  assert.match(w, /WARN/);
+  assert.match(w, /250/);   // threshold
+  assert.match(w, /100/);   // mechanicalTotal
+  assert.match(w, /15/);    // sampled
+  assert.match(w, /85/);    // skippedTotal
+  assert.match(w, /gen\/\*\.py/);   // cluster label
+  assert.match(w, /heuristic/i);
+});
+
+test('renderReport + renderHtml surface the files-funneled WARN, absent when the funnel never engaged', () => {
+  const funneled = {
+    threshold: 250, hot: 20, mechanicalClusters: 1, mechanicalTotal: 100, sampled: 15, skippedTotal: 85,
+    clusters: [{ label: 'gen/*.py', total: 100, sampled: 15, skipped: 85 }],
+  };
+  const md = renderReport({ findings, criteria, tier: 'high', filesFunneled: funneled });
+  assert.match(md, /WARN — mega-PR funnel engaged/);
+  assert.match(md, /gen\/\*\.py/);
+  assert.doesNotMatch(renderReport({ findings, criteria, tier: 'high' }), /mega-PR funnel/);
+  const html = renderHtml({ findings, criteria, tier: 'high', filesFunneled: funneled });
+  assert.match(html, /Mega-PR funnel engaged/);
+  assert.doesNotMatch(renderHtml({ findings, criteria, tier: 'high' }), /Mega-PR funnel/);
 });
 
 // --- S6.4: executed-test signal in the report header ---
