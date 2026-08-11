@@ -2,7 +2,7 @@
 
 Read this before ranking findings. It governs *what you lead with*, not the finding contract.
 
-**Lead with leverage.** Correctness and security come first. Surface the one thing the author most needs to hear — don't bury it.
+**Lead with leverage.** Correctness and security come first, always. Surface the one thing the author most needs to hear — don't bury it.
 
 **One structural problem beats ten nits.** A single design flaw (wrong boundary, leaked invariant, missing authz) alongside ten cosmetic issues *is* the review — report it first and call the nits secondary. Never let a pile of `suggestion`s drown a `critical`.
 
