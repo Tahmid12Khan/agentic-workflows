@@ -444,6 +444,48 @@ test('CLI: a run with no dimensionAgents at all skips routed-writing entirely (n
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
+test('CLI: two shards each get their OWN distinct routed manifest/bundle — never leak into each other', () => {
+  // Both shards independently trigger routing for the same agent (test-adequacy-reviewer): each
+  // has a mix of a test file and a non-test file. The end-to-end regression this guards: shard A's
+  // routed manifest/bundle must never be attached to, or contain files from, shard B's aspect —
+  // `written[i]` is indexed per shard, and this proves that indexing never crosses over on disk.
+  const dir = mkdtempSync(join(tmpdir(), 'build-args-tworoute-'));
+  try {
+    const filesA = ['src/a/Widget.js', 'src/a/Widget.test.js'];
+    const filesB = ['src/b/Gadget.js', 'src/b/Gadget.test.js'];
+    writeFileSync(join(dir, 'plan.json'), JSON.stringify({
+      tier: 'standard', fileCount: 4, files: [...filesA, ...filesB],
+      shards: [{ label: 'a', files: filesA }, { label: 'b', files: filesB }],
+      dimensionAgents: { D5: 'test-adequacy-reviewer' },
+    }));
+    writeFileSync(join(dir, 'diff.txt'), [...filesA, ...filesB].map((f) =>
+      `diff --git a/${f} b/${f}\n--- a/${f}\n+++ b/${f}\n@@ -1 +1,2 @@\n-a\n+b\n+c\n`).join(''));
+    const r = spawnSync(process.execPath, [SCRIPT, '--dir', dir], { encoding: 'utf8' });
+    assert.equal(r.status, 0, r.stderr);
+    const a = JSON.parse(r.stdout);
+
+    const [shardA, shardB] = a.shards;
+    const routedA = shardA.routed?.['test-adequacy-reviewer'];
+    const routedB = shardB.routed?.['test-adequacy-reviewer'];
+    assert.ok(routedA, 'shard A should get its own routed entry');
+    assert.ok(routedB, 'shard B should get its own routed entry');
+
+    // distinct on-disk paths — shard A and shard B never share a manifest or bundle part
+    assert.notEqual(routedA.manifest, routedB.manifest);
+    assert.notEqual(routedA.parts[0], routedB.parts[0]);
+
+    // shard A's routed manifest carries ONLY shard A's test file, never shard B's
+    const manifestA = readFileSync(routedA.manifest, 'utf8');
+    assert.match(manifestA, /Widget\.test\.js/);
+    assert.doesNotMatch(manifestA, /Gadget/);
+
+    // shard B's routed manifest carries ONLY shard B's test file, never shard A's
+    const manifestB = readFileSync(routedB.manifest, 'utf8');
+    assert.match(manifestB, /Gadget\.test\.js/);
+    assert.doesNotMatch(manifestB, /Widget/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('CLI: a routed-manifest write failure degrades to no `.routed` field, never crashes the build', () => {
   const dir = mkdtempSync(join(tmpdir(), 'build-args-routedfail-'));
   try {

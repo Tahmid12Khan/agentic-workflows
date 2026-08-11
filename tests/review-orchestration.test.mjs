@@ -194,6 +194,35 @@ test('expandAspects: a shard with a precomputed routed[agent] entry uses it — 
   assert.equal(a.count, 1);
 });
 
+test('expandAspects: two shards\' routed entries for the SAME agent never cross-contaminate', () => {
+  // Both shards independently route for test-adequacy-reviewer — each aspect (keyed by
+  // `${agent} ${shardId}`, via `routedByAspect`'s aspect-object-reference keying) must only ever
+  // adopt ITS OWN shard's routed entry, never the sibling shard's.
+  const shards = [
+    {
+      label: 'A', count: 2, manifest: '/s/manifests/0-A.files', parts: ['/s/bundles/0-A-0.txt'], files: [],
+      routed: { 'test-adequacy-reviewer': { manifest: '/s/manifests/0-A-ta.files', parts: ['/s/bundles/0-A-ta-0.txt'], count: 1 } },
+    },
+    {
+      label: 'B', count: 2, manifest: '/s/manifests/1-B.files', parts: ['/s/bundles/1-B-0.txt'], files: [],
+      routed: { 'test-adequacy-reviewer': { manifest: '/s/manifests/1-B-ta.files', parts: ['/s/bundles/1-B-ta-0.txt'], count: 1 } },
+    },
+  ];
+  const aspects = expandAspects({ D5: 'test-adequacy-reviewer' }, shards);
+  assert.equal(aspects.length, 2);
+  const aspectA = aspects.find((a) => a.shardId === 'A');
+  const aspectB = aspects.find((a) => a.shardId === 'B');
+  assert.equal(aspectA.manifest, '/s/manifests/0-A-ta.files');
+  assert.deepEqual(aspectA.parts, ['/s/bundles/0-A-ta-0.txt']);
+  assert.equal(aspectB.manifest, '/s/manifests/1-B-ta.files');
+  assert.deepEqual(aspectB.parts, ['/s/bundles/1-B-ta-0.txt']);
+  // explicit cross-check: neither aspect ever picked up the OTHER shard's routed manifest/bundle
+  assert.notEqual(aspectA.manifest, aspectB.manifest);
+  assert.notEqual(aspectA.parts[0], aspectB.parts[0]);
+  assert.notEqual(aspectA.manifest, shards[1].routed['test-adequacy-reviewer'].manifest);
+  assert.notEqual(aspectB.manifest, shards[0].routed['test-adequacy-reviewer'].manifest);
+});
+
 test('expandAspects: a shard\'s routed map missing THIS agent falls back to inline-narrowing for it', () => {
   // `routed` has an entry for data-store-reviewer only; the correctness-reviewer aspect on the
   // SAME shard must fall back to the secondary path (here, staying full since it's unrouted) —
