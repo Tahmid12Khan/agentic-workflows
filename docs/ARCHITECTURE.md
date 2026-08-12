@@ -785,6 +785,7 @@ the source or filing a bug.
 | extra-intent scrutiny / forced checks / spawn cap | `lib/route.mjs` | `extraScrutinyTargets`, `forcedChecks`, `recordSpawn` |
 | fan-out orchestration (intent → review → verify → report) | `lib/review-workflow.mjs` | Workflow DSL (no shebang/`main`; harness globals) |
 | pure helpers for the Workflow (importable + unit-tested) | `lib/review-orchestration.mjs` | `expandAspects`, `findingKey`, `canSpawn`, `recordSpawn`, `buildReportPayload` |
+| reading the `args` payload the harness hands the sandbox | `lib/review-orchestration.mjs` | `parseWorkflowArgs` (parse + surplus-trailing-brace recovery) |
 | findings → report + verdict + tally line | `lib/render.mjs` | `renderReport`, `renderHtml`, `renderVerdict`, `partitionOutOfDiff` (pre-existing vs out-of-scope), `tallyLine`, `splitUncertain`, `effortLine`, `convergenceLine` |
 | this run's token usage + USD cost | `lib/usage.mjs` | `computeReviewUsage`, `tallyLines`, `tallyByFamily`, `cacheHitPct`, `costOf`, `priceFor`, `familyOf` |
 | render + gate + memory record | `lib/report.mjs` | (CLI) |

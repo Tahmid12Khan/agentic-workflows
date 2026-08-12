@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { expandAspects, routedFiles, findingKey, newCaps, canSpawn, recordSpawn, buildReportPayload, pluginAgent, PLUGIN_NS, inDiffScope, partitionByScope, intentBrief, briefFor, CRITERIA_AGENTS, synthIntent, criticIntent, intentContext, screenPacket, selectGaps, CONSEQUENCE_DIRECTIVE, historyBlock, testSignalBlock, reviewerAddendum, DOUBLE_RUN_AGENTS, isDoubleRunAgent, dedupeFindings } from '../lib/review-orchestration.mjs';
+import { expandAspects, routedFiles, findingKey, newCaps, canSpawn, recordSpawn, buildReportPayload, pluginAgent, PLUGIN_NS, inDiffScope, partitionByScope, intentBrief, briefFor, CRITERIA_AGENTS, synthIntent, criticIntent, intentContext, screenPacket, selectGaps, CONSEQUENCE_DIRECTIVE, historyBlock, testSignalBlock, reviewerAddendum, DOUBLE_RUN_AGENTS, isDoubleRunAgent, dedupeFindings, parseWorkflowArgs } from '../lib/review-orchestration.mjs';
 
 test('expandAspects = agents × shards, dims carried as a list', () => {
   const aspects = expandAspects(
@@ -939,6 +939,7 @@ const SYNCED_FUNCTIONS = [
   ['selectForVerification', '../lib/verify.mjs'],
   ['resolveVerification', '../lib/verify.mjs'],
   ['partition', '../lib/verify.mjs'],
+  ['parseWorkflowArgs', '../lib/review-orchestration.mjs'],
   ['routedFiles', '../lib/review-orchestration.mjs'],
   ['expandAspects', '../lib/review-orchestration.mjs'],
   ['intentBrief', '../lib/review-orchestration.mjs'],
@@ -966,4 +967,54 @@ test('every inlined function body stays byte-for-byte (whitespace-normalized) in
     assert.equal(normWs(inlinedBody), normWs(canonBody),
       `${name}: inlined copy in review-workflow.mjs has drifted from the canonical ${canonicalPath} (canonical wins — align the inlined copy)`);
   }
+});
+
+// --- parseWorkflowArgs: recover from the orchestrator's over-closed args transcription ---
+// Observed on nhst/braze-connector#261 (2026-08-12): 11 of 15 Workflow dispatches carried an args
+// string one character too long — a surplus trailing `}` — because args.json's tail nests three deep
+// (headCommit -> checkout -> root) and the model typed four. Complete content, then over-closed.
+test('parseWorkflowArgs parses a well-formed args string', () => {
+  const good = JSON.stringify({ plan: { dimensions: ['D1'] }, checkout: { headCommit: { origin: null } } });
+  const r = parseWorkflowArgs(good);
+  assert.deepEqual(r.args.plan.dimensions, ['D1']);
+  assert.equal(r.repaired, false);
+  assert.equal(r.note, null);
+});
+
+test('parseWorkflowArgs accepts an already-parsed object unchanged', () => {
+  const obj = { plan: { dimensions: ['D2'] } };
+  const r = parseWorkflowArgs(obj);
+  assert.equal(r.args, obj);
+  assert.equal(r.repaired, false);
+});
+
+test('parseWorkflowArgs recovers the exact observed failure: one surplus trailing brace', () => {
+  const good = JSON.stringify({ plan: { dimensions: ['D1'] }, checkout: { headCommit: { date: '2026-08-12', origin: null } } });
+  assert.match(good, /null\}\}\}$/);
+  const r = parseWorkflowArgs(good + '}');           // the drift, verbatim
+  assert.deepEqual(r.args.plan.dimensions, ['D1']);
+  assert.equal(r.args.checkout.headCommit.origin, null);
+  assert.equal(r.repaired, true);
+  assert.match(r.note, /trailing/i);
+});
+
+test('parseWorkflowArgs recovers surplus trailing braces plus whitespace', () => {
+  const good = JSON.stringify({ a: { b: 1 } });
+  const r = parseWorkflowArgs(good + '}\n }');
+  assert.deepEqual(r.args, { a: { b: 1 } });
+  assert.equal(r.repaired, true);
+});
+
+test('parseWorkflowArgs refuses to repair genuinely truncated args', () => {
+  const good = JSON.stringify({ plan: { dimensions: ['D1'] }, checkout: { x: 1 } });
+  assert.throws(() => parseWorkflowArgs(good.slice(0, good.length - 12)), /args JSON malformed/);
+});
+
+test('parseWorkflowArgs refuses to repair corruption in the middle', () => {
+  assert.throws(() => parseWorkflowArgs('{"a": 1, XX "b": 2}'), /args JSON malformed/);
+});
+
+test('parseWorkflowArgs treats null/undefined args as an empty object', () => {
+  assert.deepEqual(parseWorkflowArgs(null).args, {});
+  assert.deepEqual(parseWorkflowArgs(undefined).args, {});
 });

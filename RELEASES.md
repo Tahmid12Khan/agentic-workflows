@@ -3,6 +3,18 @@
 Release log for the **adversarial-code-review** plugin. Newest first. The forward-looking
 plan lives in [ROADMAP.md](ROADMAP.md). Source-of-truth version: `.claude-plugin/plugin.json`.
 
+## v0.27.1
+
+**Fix: a review could die at zero agents because the orchestrator's `args` payload arrived over-closed.**
+
+The Workflow dispatch hands `args` to the sandbox as a JSON **string** that the orchestrator emits verbatim from `args.json`. On a large payload that transcription drifts: `args.json`'s tail nests three deep (`headCommit` → `checkout` → root) and the orchestrator wrote four closing braces. Every failing dispatch was exactly one character too long — tail `}}}}` where the file has `}}}`. `JSON.parse` threw before a single agent spawned, so the run reported an error with no findings, no report, and nothing to resume from.
+
+- **New `parseWorkflowArgs`** (`lib/review-orchestration.mjs`, inlined into `lib/review-workflow.mjs` under the `SYNCED_FUNCTIONS` body-equality guard): parses the payload, and on failure peels up to 8 trailing `}`/`]`/whitespace characters looking for a valid prefix. Recovery is **engine-independent** — it never reads a position out of the parser's error message, because the sandbox engine emits `"Unable to parse JSON string"` with no position while Node emits `"…at position N"`. An implementation keyed on the message would have passed every test and failed in production.
+- **It repairs only surplus-tail drift.** A truncated payload or one corrupted mid-string still throws, with a message naming the cause and telling the orchestrator to re-emit from `args.json`. Silently "fixing" a payload that lost content would produce a review with a narrower scope than the user asked for.
+- **A repair is never silent**: the recovery pushes a note onto the run's `notes`, so the report states how many surplus characters were discarded. Per golden rule 3 the review proceeds — but a transcription regression stays visible instead of being papered over.
+
+Verified on Claude Code 2.1.228, the version the failures were observed on; no downgrade needed.
+
 ## v0.27.0
 
 **Token-cost reduction, phases 1–3: bundled diff reads, on-demand context fragments, dimension-scoped file bundles, and a mega-PR sampling funnel.**
