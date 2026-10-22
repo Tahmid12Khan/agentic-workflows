@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, existsSync, readFileSync, rmSync, readdirSync, mkdirSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, existsSync, readFileSync, rmSync, readdirSync, mkdirSync, writeFileSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -68,9 +68,12 @@ test('report.mjs writes into the old .adverserial-code-review dir when only it e
 const LIB = fileURLToPath(new URL('../lib/', import.meta.url));
 const REPO = fileURLToPath(new URL('../', import.meta.url));
 const node = process.execPath;
+// plan.mjs also reads a user-scope REVIEW.md from CLAUDE_CONFIG_DIR; point it at a missing dir so the
+// developer's own global file never leaks into the assertions.
+const NO_CLAUDE_CONFIG = { ...process.env, CLAUDE_CONFIG_DIR: join(tmpdir(), `acr-no-claude-config-${process.pid}`) };
 
-function run(script, args = [], { input, cwd = REPO } = {}) {
-  return execFileSync(node, [join(LIB, script), ...args], { input, cwd, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
+function run(script, args = [], { input, cwd = REPO, env = NO_CLAUDE_CONFIG } = {}) {
+  return execFileSync(node, [join(LIB, script), ...args], { input, cwd, env, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
 }
 
 test('plan.mjs emits a JSON plan with the expected keys', () => {
@@ -555,7 +558,7 @@ test('plan.mjs --incremental narrows to prevHead..head on a fast-forward, falls 
 
 // Builds a throwaway repo with a base commit + a second commit adding `files` (path -> content),
 // then runs plan.mjs against base..head. Shared by the mega-PR funnel (#10) wiring tests below.
-function planForFiles(files, { config } = {}) {
+function planForFiles(files, { config, reviewMd, env } = {}) {
   const repo = mkdtempSync(join(tmpdir(), 'acr-funnel-'));
   const g = (...a) => execFileSync('git', a, { cwd: repo, stdio: ['pipe', 'pipe', 'pipe'] }).toString();
   try {
@@ -575,9 +578,85 @@ function planForFiles(files, { config } = {}) {
       mkdirSync(join(repo, '.adversarial-code-review'), { recursive: true });
       writeFileSync(join(repo, '.adversarial-code-review', 'config.json'), JSON.stringify(config));
     }
-    return JSON.parse(run('plan.mjs', ['--base', base], { cwd: repo }));
+    if (reviewMd) writeFileSync(join(repo, 'REVIEW.md'), reviewMd);
+    return JSON.parse(run('plan.mjs', ['--base', base], { cwd: repo, env: typeof env === 'function' ? env(repo) : env }));
   } finally { rmSync(repo, { recursive: true, force: true }); }
 }
+
+function withGlobalReviewMd(content, fn) {
+  const dir = mkdtempSync(join(tmpdir(), 'acr-claude-config-'));
+  try {
+    writeFileSync(join(dir, 'REVIEW.md'), content);
+    return fn(dir);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+}
+
+test('plan.mjs: global and project REVIEW.md are both injected, project last so it wins on conflict', () => {
+  withGlobalReviewMd('GLOBAL RULE: no console.log\n', (dir) => {
+    const out = planForFiles({ 'src/a.js': 'x\n' }, {
+      reviewMd: 'PROJECT RULE: allow console.log\n',
+      env: { ...process.env, CLAUDE_CONFIG_DIR: dir },
+    });
+    const g = out.reviewInstructions.indexOf('GLOBAL RULE');
+    const p = out.reviewInstructions.indexOf('PROJECT RULE');
+    assert.ok(g >= 0 && p > g, 'global block must precede the project block');
+    assert.match(out.reviewInstructions, /PROJECT \(REVIEW\.md\) — overrides GLOBAL on conflict:\nPROJECT RULE/);
+    assert.equal(out.globalReviewInstructionsPath, join(dir, 'REVIEW.md'));
+    assert.equal(out.reviewInstructionsPath, 'REVIEW.md');
+  });
+});
+
+test('plan.mjs: a global REVIEW.md alone is injected verbatim', () => {
+  withGlobalReviewMd('GLOBAL RULE: æøå\n', (dir) => {
+    const out = planForFiles({ 'src/a.js': 'x\n' }, { env: { ...process.env, CLAUDE_CONFIG_DIR: dir } });
+    assert.equal(out.reviewInstructions, 'GLOBAL RULE: æøå\n');
+    assert.equal(out.reviewInstructionsPath, null);
+  });
+});
+
+test('plan.mjs: without CLAUDE_CONFIG_DIR the global REVIEW.md is read from ~/.claude', () => {
+  const home = mkdtempSync(join(tmpdir(), 'acr-home-'));
+  try {
+    mkdirSync(join(home, '.claude'));
+    writeFileSync(join(home, '.claude', 'REVIEW.md'), 'HOME RULE\n');
+    const { CLAUDE_CONFIG_DIR, ...env } = process.env;
+    const out = planForFiles({ 'src/a.js': 'x\n' }, { env: { ...env, HOME: home } });
+    assert.equal(out.reviewInstructions, 'HOME RULE\n');
+    assert.equal(out.globalReviewInstructionsPath, join(home, '.claude', 'REVIEW.md'));
+  } finally { rmSync(home, { recursive: true, force: true }); }
+});
+
+test('plan.mjs: a non-string review_instructions disables the project file without crashing', () => {
+  withGlobalReviewMd('GLOBAL RULE\n', (dir) => {
+    const out = planForFiles({ 'src/a.js': 'x\n' }, {
+      config: { review_instructions: false },
+      reviewMd: 'PROJECT RULE\n',
+      env: { ...process.env, CLAUDE_CONFIG_DIR: dir },
+    });
+    assert.equal(out.reviewInstructions, 'GLOBAL RULE\n');
+  });
+});
+
+test('plan.mjs: a config dir that symlinks to the reviewed repo injects its REVIEW.md once', () => {
+  const links = mkdtempSync(join(tmpdir(), 'acr-link-'));
+  try {
+    const out = planForFiles({ 'src/a.js': 'x\n' }, {
+      reviewMd: 'PROJECT RULE\n',
+      env: (repo) => {
+        symlinkSync(repo, join(links, 'claude'));
+        return { ...process.env, CLAUDE_CONFIG_DIR: join(links, 'claude') };
+      },
+    });
+    assert.equal(out.reviewInstructions, 'PROJECT RULE\n');
+    assert.equal(out.globalReviewInstructionsPath, null);
+  } finally { rmSync(links, { recursive: true, force: true }); }
+});
+
+test('plan.mjs: no global REVIEW.md leaves the project one byte-identical', () => {
+  const out = planForFiles({ 'src/a.js': 'x\n' }, { reviewMd: 'PROJECT RULE\n' });
+  assert.equal(out.reviewInstructions, 'PROJECT RULE\n');
+  assert.equal(out.globalReviewInstructionsPath, null);
+});
 
 test('plan.mjs: routing.enabled defaults to true, and an explicit false is carried through the plan', () => {
   const files = { 'src/a.js': 'x\n' };
