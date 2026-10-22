@@ -3,6 +3,15 @@
 Release log for the **adversarial-code-review** plugin. Newest first. The forward-looking
 plan lives in [ROADMAP.md](ROADMAP.md). Source-of-truth version: `.claude-plugin/plugin.json`.
 
+## v0.27.2
+
+**Global REVIEW.md: one user-scope review mandate for every repo.**
+
+- `plan.mjs` now also reads `${CLAUDE_CONFIG_DIR:-~/.claude}/REVIEW.md` (beside the global `CLAUDE.md`) and merges it into `plan.reviewInstructions`, the highest-priority block on the reviewer, intent-analyzer and completeness-critic prompts.
+- Both files present → a `GLOBAL (…)` block, then the project's `PROJECT (…) — overrides GLOBAL on conflict` block. One present → its content verbatim, so a project-only setup keeps its prompt-cache prefix.
+- Each file is capped at 8k on its own. No config key: delete the global file to disable it. Its path is reported as `plan.globalReviewInstructionsPath`.
+- The global file is skipped when it is the project file itself (compared by real path, so a `~/.claude` symlinked into a dotfiles repo is not injected twice). A non-string `review_instructions` disables the project file without crashing the plan.
+
 ## v0.27.1
 
 **Fix: a review could die at zero agents because the orchestrator's `args` payload arrived over-closed.**
