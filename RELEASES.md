@@ -3,6 +3,14 @@
 Release log for the **adversarial-code-review** plugin. Newest first. The forward-looking
 plan lives in [ROADMAP.md](ROADMAP.md). Source-of-truth version: `.claude-plugin/plugin.json`.
 
+## v0.27.3
+
+**D16 simplification runs by default on the standard tier.**
+
+- `lib/triage.mjs` `TIER_DIMENSIONS.standard` now includes `D16`, so `simplification-reviewer` (with its `structural-remedies` + `complexity-judgment` doctrine) reviews every standard-tier change, not only high.
+- Trivial, low and critical stay opt-in via `always_dims` or `--dimensions D16`.
+- README, ARCHITECTURE, `review-init.md` and the config schema updated; `tests/triage.test.mjs` asserts D16 on standard and moves the `always_dims` opt-in case to the low tier.
+
 ## v0.27.2
 
 **Global REVIEW.md: one user-scope review mandate for every repo.**
