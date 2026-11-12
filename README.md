@@ -305,7 +305,7 @@ Runs on **every non-trivial tier** (`plan.runVerify`), with findings shipping at
 | D13 docs | docs-comment-reviewer | sonnet |
 | D14 observability | observability-reviewer | sonnet |
 | D15 deps/CVE | dependency-reviewer | sonnet |
-| D16 simplification | simplification-reviewer | sonnet · high+ only (opt-in below via `always_dims`/`--dimensions`) |
+| D16 simplification | simplification-reviewer | sonnet · standard + high (opt-in elsewhere via `always_dims`/`--dimensions`) |
 | D17 a11y/i18n | a11y-i18n-reviewer | sonnet |
 
 Each is isolated (clean packet: intent + criteria + diff, never the chat history), changed-lines-only, and confidence-gated (≥ 80).

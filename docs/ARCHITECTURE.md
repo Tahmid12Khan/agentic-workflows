@@ -330,13 +330,13 @@ flowchart TD
 |------|-----------------|
 | trivial | D2, D13 |
 | low | D1, D2, D5 |
-| standard | D1, D2, D4, D5, D12 |
+| standard | D1, D2, D4, D5, D12, D16 |
 | high | D1, D2, D4, D5, D10, D11, D12, D16 |
 | critical | D1, D2, D3, D4, D5, D6, D7, D8, D12, D14 |
 
 **D16 (simplification)** is a taste pass, not a defect pass, so it ships by default only
-from the **high** tier up; below that it is opt-in via `always_dims` (config) or
-`--dimensions D16`.
+on the **standard** and **high** tiers; on trivial/low/critical it is opt-in via `always_dims`
+(config) or `--dimensions D16`.
 
 **Fan-out trim (`config.fanout`, off by default) — the agent-count cost lever.** The
 content-gated dimensions computed above (the "+ content-gated dimensions" step in the
@@ -725,7 +725,7 @@ optional and falls back to a sensible default.
 | Key | What it controls |
 |---|---|
 | `risk_map` | glob → tier floors (`critical`, `high`). Can only **raise** a tier. |
-| `always_dims` | dimensions (Dn ids) reviewed on every run regardless of tier — e.g. `D16` (opt-in below high). Unknown ids ignored. |
+| `always_dims` | dimensions (Dn ids) reviewed on every run regardless of tier — e.g. `D16` (opt-in on trivial/low/critical). Unknown ids ignored. |
 | `fanout` | **agent-count cost lever, off by default** (`trim:false` = identical to prior behavior). When `trim:true`: `defer_dims` (default `D9` perf, `D17` a11y) are dropped below `defer_below` (default `high`); the remaining content-gated specialists are capped at `max_added` (default uncapped), keeping the highest-priority ones per `keep_order` (default: security/data `D6`/`D7` > correctness `D4`/`D11` > contract/deps/advisory). Base-tier dimensions and `always_dims` are never trimmed; a dropped dimension is named in the report's **Did not run** section. |
 | `models` | per-dimension model matrix `f(dim, tier)`: `opus_dims` (which dims escalate), `opus_min_tier` (the floor tier, default `high`), `by_tier` (base model per tier). |
 | `mandatory_checks` | checks applied as forced review items at every tier (mapped to a dimension by `route.mjs`). |

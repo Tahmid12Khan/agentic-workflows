@@ -18,7 +18,7 @@
     "always_dims": {
       "type": "array",
       "items": { "type": "string" },
-      "description": "Dimensions (Dn ids) reviewed on every run regardless of tier — e.g. 'D16' simplification, a taste pass trimmed to opt-in below the high tier. Unknown ids are ignored. Persistent equivalent of passing them via --dimensions."
+      "description": "Dimensions (Dn ids) reviewed on every run regardless of tier — e.g. 'D16' simplification, a taste pass that is opt-in on the trivial, low and critical tiers. Unknown ids are ignored. Persistent equivalent of passing them via --dimensions."
     },
     "models": {
       "type": "object",

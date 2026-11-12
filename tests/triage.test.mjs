@@ -52,23 +52,27 @@ test('baseTier auto-classifies "low" only when fileCount<=3, netLoc<=40, and tes
   assert.equal(planReview({ ...boundary, testsPresent: false }, DEFAULT_CFG).tier, 'standard');
 });
 
-test('normal feature → standard tier, D16 opt-in below high, verify on', () => {
+test('normal feature → standard tier, D16 on by default, verify on', () => {
   const f = cases.find(c => c.name === 'normal feature');
   const plan = planReview(computeSignals(f), DEFAULT_CFG);
   assert.equal(plan.tier, 'standard');
-  // S5.2: simplification (D16) is a taste pass, trimmed to opt-in below the high tier
-  assert.equal(plan.dimensions.includes('D16'), false);
+  assert.ok(plan.dimensions.includes('D16'));
+  assert.ok(plan.agents.includes('simplification-reviewer'));
   assert.equal(plan.runVerify, true);
 });
 
-test('S5.2: always_dims brings D16 back on standard; --dimensions is the other opt-in', () => {
-  const f = cases.find(c => c.name === 'normal feature');
-  const withD16 = planReview(computeSignals(f), { ...DEFAULT_CFG, always_dims: ['D16'] });
-  assert.equal(withD16.tier, 'standard');
+const LOW_SIGNALS = { riskPaths: [], languages: [], publicContract: false, concurrencyTouched: false, fileCount: 3, netLoc: 40, testsPresent: true };
+
+test('S5.2: D16 is opt-in below standard; always_dims brings it back on low', () => {
+  const plain = planReview(LOW_SIGNALS, DEFAULT_CFG);
+  assert.equal(plain.tier, 'low');
+  assert.equal(plain.dimensions.includes('D16'), false);
+  const withD16 = planReview(LOW_SIGNALS, { ...DEFAULT_CFG, always_dims: ['D16'] });
+  assert.equal(withD16.tier, 'low');
   assert.ok(withD16.dimensions.includes('D16'));
   assert.ok(withD16.agents.includes('simplification-reviewer'));
   // an unknown id in always_dims is ignored, not carried into the plan
-  const bogus = planReview(computeSignals(f), { ...DEFAULT_CFG, always_dims: ['D999'] });
+  const bogus = planReview(LOW_SIGNALS, { ...DEFAULT_CFG, always_dims: ['D999'] });
   assert.equal(bogus.dimensions.includes('D999'), false);
 });
 
